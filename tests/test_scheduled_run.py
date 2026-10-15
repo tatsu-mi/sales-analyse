@@ -105,6 +105,30 @@ class ScheduledRunTests(unittest.TestCase):
         app.analysis_pipeline.atomic_json(self.checkpoint, {
             'mailbox': self.state.stem, 'last_run_at': '2026-10-01T09:15:00+09:00'})
 
+    def test_cli_test_notification_skips_email_analysis_and_all_state_changes(self):
+        self.seed()
+        before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch.dict(os.environ, {'TEAMS_WEBHOOK_URL': 'https://example.com/secret'}, clear=True), \
+                patch.object(scheduled.sys, 'argv', ['scheduled_run.py', '--config', str(self.config_path), '--test-notification']), \
+                patch.object(app, 'run', side_effect=AssertionError('mail analysis')), \
+                patch.object(app, 'iter_fetch_mails', side_effect=AssertionError('IMAP')), \
+                patch.object(app, 'generate', side_effect=AssertionError('Gemini')), \
+                patch.object(app, 'record_last_run', side_effect=AssertionError('state update')), \
+                patch.object(scheduled, 'send_card') as send:
+            self.assertEqual(scheduled.main(), 0)
+        send.assert_called_once()
+        card = json.loads(send.call_args.args[0])['attachments'][0]['content']
+        self.assertEqual(card['body'][0]['text'], '【テスト投稿】ローカル環境からTeamsへの接続確認です。')
+        self.assertNotIn('actions', card)
+        after = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        self.assertEqual(after, before)
+
+    def test_test_notification_requires_webhook_without_exposing_it(self):
+        with patch.dict(os.environ, {'TEAMS_WEBHOOK_URL': ''}), patch.object(scheduled, 'send_card') as send:
+            with self.assertRaisesRegex(app.ToolError, 'TEAMS_WEBHOOK_URL'):
+                scheduled.send_test_notification(self.config_path)
+        send.assert_not_called()
+
     def test_prepare_does_not_notify_or_advance_checkpoint_before_upload(self):
         self.seed()
         before = self.checkpoint.read_bytes()

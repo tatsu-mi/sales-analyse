@@ -24,10 +24,14 @@ def validate_report_url(report_url):
 
 def card_payload(report_url):
     validate_report_url(report_url)
+    return text_card_payload(f"[メール分析レポートを開く]({report_url})")
+
+
+def text_card_payload(text):
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard", "version": "1.2",
-        "body": [{"type": "TextBlock", "text": f"[メール分析レポートを開く]({report_url})", "wrap": True}],
+        "body": [{"type": "TextBlock", "text": text, "wrap": True}],
     }
     return json.dumps({"type": "message", "attachments": [{
         "contentType": "application/vnd.microsoft.card.adaptive",
@@ -167,6 +171,16 @@ def run(config_path, checkpoint_dir, publish_dir, report_url):
     notify(config_path, checkpoint_dir, publish_dir, report_url)
 
 
+def send_test_notification(config_path):
+    config = app.load_config(config_path.resolve())
+    webhook = os.environ.get("TEAMS_WEBHOOK_URL", "").strip()
+    if urlparse(webhook).scheme != "https" or not urlparse(webhook).netloc:
+        raise app.ToolError("TEAMS_WEBHOOK_URL にTeams WorkflowsのHTTPS URLを設定してください。")
+    payload = text_card_payload("【テスト投稿】ローカル環境からTeamsへの接続確認です。")
+    send_card(payload, webhook, config["teams"]["timeout_seconds"])
+    print("Teams Webhookがテスト投稿を受理しました。", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.toml", type=Path)
@@ -175,10 +189,13 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true", help="分析と通知待ち状態の保存のみ")
     mode.add_argument("--notify-only", action="store_true", help="Artifact保存後にリンクを通知し時刻を更新")
+    mode.add_argument("--test-notification", action="store_true", help="メール取得・分析・時刻更新なしでTeamsへテスト文を投稿")
     parser.add_argument("--report-url", default=os.environ.get("REPORT_URL", ""), help="保存済みレポートArtifactのHTTPS URL")
     args = parser.parse_args()
     try:
-        if args.prepare_only:
+        if args.test_notification:
+            send_test_notification(args.config)
+        elif args.prepare_only:
             prepare(args.config, args.checkpoint_dir, args.publish_dir)
         elif args.notify_only:
             notify(args.config, args.checkpoint_dir, args.publish_dir, args.report_url)

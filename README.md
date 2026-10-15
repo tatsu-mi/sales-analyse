@@ -152,6 +152,14 @@ python validate_config.py config.toml priority_rules.toml
 
 ## GitHub Actionsでの定期実行とTeams投稿
 
+ローカルでTeamsへの接続だけを確認する場合は、`.env` の `TEAMS_WEBHOOK_URL` を設定して次を実行します。
+
+```powershell
+python scheduled_run.py --test-notification
+```
+
+「【テスト投稿】ローカル環境からTeamsへの接続確認です。」という文だけを投稿します。レポートURL・IMAP認証情報・Gemini APIキーは不要です。メール取得・分析・レポート作成・前回実行時刻の読み書きは行いません。別の設定ファイルを使う場合は `--config path/to/config.toml` を指定します。Webhookに受理された後、Teamsの投稿先で表示を確認してください。
+
 `.github/workflows/mail-report.yml` は毎日 **9:15（日本時間）** に、メール取得 → Gemini分析 → レポートArtifact保存 → Teamsへリンク通知 → 次回用の時刻保存を実行します。Actions画面の **Run workflow** から手動実行もできます。定期実行・手動実行ともデフォルトブランチを使用します。外部Pythonパッケージは不要です。
 
 1. `config.toml` と `priority_rules.toml` をリポジトリに配置します。モデル、分析条件、上限、出力先、Teamsの通信タイムアウトなど、認証情報以外はTOMLで管理します。`config.toml` はローカル実行とGHAで共用します。変更は次回の実行から反映されます。
