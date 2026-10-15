@@ -1,7 +1,8 @@
-"""Prepare a report, notify Teams with its artifact link, then commit the checkpoint."""
+"""Prepare a report, post it to Teams in project-sized parts, then commit the checkpoint."""
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -13,6 +14,10 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import mail_analyzer as app
+import prioritization
+
+# Leave room below Teams' 28 KB limit, including the JSON/card envelope.
+MAX_CARD_BYTES = 24_000
 
 
 def validate_report_url(report_url):
@@ -22,9 +27,21 @@ def validate_report_url(report_url):
         raise app.ToolError("レポートのHTTPS URLを指定してください。")
 
 
-def card_payload(report_url):
+def card_payload(report_url, ranked=None, rules=None):
     validate_report_url(report_url)
-    return text_card_payload(f"[メール分析レポートを開く]({report_url})")
+    sections = [f"[メール分析レポートを開く]({report_url})"]
+    if ranked is not None:
+        for kind in prioritization.KINDS:
+            lines = [f"{rules[kind]['label']}（上位{rules['top_n']}件まで）"]
+            for entry in ranked[kind]:
+                title = str(entry['latest']['title'] or '不明').replace('\r', ' ').replace('\n', ' ')
+                # Keep project titles literal rather than interpreting Markdown links/emphasis.
+                title = re.sub(r'([\\`*_{}\[\]()#+.!|>~-])', r'\\\1', title)
+                lines.append(f"{entry['rank']}. {title}")
+            if not ranked[kind]:
+                lines.append("該当候補はありません。")
+            sections.append('\n\n'.join(lines))
+    return text_card_payload('\n\n'.join(sections))
 
 
 def text_card_payload(text):
@@ -78,8 +95,88 @@ def send_card(payload, webhook_url, timeout):
         time.sleep(max(1, wait))
 
 
-def post_report(report_url, webhook_url, timeout):
-    send_card(card_payload(report_url), webhook_url, timeout)
+def report_blocks(report):
+    """Keep each project intact; ignore heading-like text in verbatim emails."""
+    blocks, current = [], []
+    fence = None
+    has_project = False
+    for line in report.splitlines(keepends=True):
+        if fence is None:
+            category = line.startswith('## ')
+            project = line.startswith('### ')
+            if current and (category or (project and has_project)):
+                blocks.append(''.join(current))
+                current = []
+                has_project = False
+            has_project = has_project or project
+            opening = re.match(r'^(`{3,}|~{3,})', line)
+            if opening:
+                fence = opening[1]
+        elif re.fullmatch(re.escape(fence[0]) + '{' + str(len(fence)) + r',}[ \t]*[\r\n]*', line):
+            fence = None
+        current.append(line)
+    if current:
+        blocks.append(''.join(current))
+    return blocks
+
+
+def report_card_payloads(summary, report, title='メール分析レポート'):
+    # Reserve bytes for numbering so chunking uses the serialized UTF-8 payload size.
+    prefix = f'{title}（0000000000/0000000000）\n\n'
+
+    def fits(text):
+        return len(text_card_payload(prefix + text)) <= MAX_CARD_BYTES
+
+    chunks, current = [], ''
+    for block in [summary + '\n\n', *report_blocks(report)]:
+        if fits(current + block):
+            current += block
+            continue
+        if current:
+            chunks.append(current)
+            current = ''
+        # Split within a project only when that project cannot fit in a fresh card.
+        while not fits(block):
+            low, high = 0, len(block)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if fits(block[:middle]):
+                    low = middle
+                else:
+                    high = middle - 1
+            if low == 0:
+                raise app.ToolError('Teams投稿のサイズ上限が小さすぎます。')
+            # Prefer a line boundary, falling back to a character boundary for long lines.
+            newline = block.rfind('\n', 0, low)
+            cut = newline + 1 if newline >= low // 2 else low
+            chunks.append(block[:cut])
+            block = block[cut:]
+        current = block
+    if current:
+        chunks.append(current)
+    return [text_card_payload(f'{title}（{index}/{len(chunks)}）\n\n' + chunk)
+            for index, chunk in enumerate(chunks, 1)]
+
+
+def post_report(report_url, webhook_url, timeout, ranked=None, rules=None, report=None):
+    summary_payload = card_payload(report_url, ranked, rules)
+    if report is None:
+        payloads = [summary_payload]
+    else:
+        summary = json.loads(summary_payload)['attachments'][0]['content']['body'][0]['text']
+        # Data files remain available in the saved artifact, not as relative Teams links.
+        report = prioritization.transform_report_text(report, lambda text: re.sub(
+            r'\]\((?:extracted_emails\.jsonl|opportunities\.jsonl|statistics\.json|ranked_emails\.json|priority_rules\.json)\)',
+            lambda match: f']({report_url})', text))
+        payloads = report_card_payloads(summary, report)
+    send_report_cards(payloads, webhook_url, timeout)
+
+
+def send_report_cards(payloads, webhook_url, timeout):
+    for index, payload in enumerate(payloads):
+        if index:
+            time.sleep(1)
+        send_card(payload, webhook_url, timeout)
 
 
 def prepare(config_path, checkpoint_dir, publish_dir):
@@ -156,13 +253,16 @@ def notify(config_path, checkpoint_dir, publish_dir, report_url):
             raise ValueError
     except (KeyError, ValueError, TypeError):
         raise app.ToolError("通知待ちレポートの状態が不正です。") from None
-    if not (publish_dir / "report.md").read_text(encoding="utf-8").strip():
+    report = (publish_dir / "report.md").read_text(encoding="utf-8")
+    if not report.strip():
         raise app.ToolError("レポートが空のため通知を停止します。")
-    post_report(report_url, webhook, config["teams"]["timeout_seconds"])
+    ranked = app.read_metadata(publish_dir / "ranked_emails.json")
+    rules = app.read_metadata(publish_dir / "priority_rules.json")
+    post_report(report_url, webhook, config["teams"]["timeout_seconds"], ranked, rules, report=report)
     app.analysis_pipeline.atomic_json(checkpoint_dir / "checkpoint.json", pending)
     app.record_last_run(state_path, boundary)
     (checkpoint_dir / "pending.json").unlink()
-    print("Teamsへのレポートリンク送信が受理されました。チェックポイントを更新しました。", flush=True)
+    print("Teamsへのレポート全件の送信が受理されました。チェックポイントを更新しました。", flush=True)
 
 
 def run(config_path, checkpoint_dir, publish_dir, report_url):
@@ -181,6 +281,23 @@ def send_test_notification(config_path):
     print("Teams Webhookがテスト投稿を受理しました。", flush=True)
 
 
+def send_test_report(config_path, report_path):
+    config = app.load_config(config_path.resolve())
+    webhook = os.environ.get("TEAMS_WEBHOOK_URL", "").strip()
+    if urlparse(webhook).scheme != "https" or not urlparse(webhook).netloc:
+        raise app.ToolError("TEAMS_WEBHOOK_URL にTeams WorkflowsのHTTPS URLを設定してください。")
+    try:
+        report = report_path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        raise app.ToolError("指定したレポートをUTF-8で読み込めません。ファイルのパスと文字コードを確認してください。") from None
+    if not report.strip():
+        raise app.ToolError("レポートが空のためテスト投稿を停止します。")
+    payloads = report_card_payloads("ローカルのreport.mdからのテスト投稿です。", report,
+                                   title="【テスト投稿】メール分析レポート")
+    send_report_cards(payloads, webhook, config["teams"]["timeout_seconds"])
+    print(f"Teams Webhookがレポートのテスト投稿（{len(payloads)}件）を受理しました。", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.toml", type=Path)
@@ -188,13 +305,16 @@ def main():
     parser.add_argument("--publish-dir", default=".gha-report", type=Path)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true", help="分析と通知待ち状態の保存のみ")
-    mode.add_argument("--notify-only", action="store_true", help="Artifact保存後にリンクを通知し時刻を更新")
+    mode.add_argument("--notify-only", action="store_true", help="Artifact保存後にレポート全文を分割投稿し時刻を更新")
     mode.add_argument("--test-notification", action="store_true", help="メール取得・分析・時刻更新なしでTeamsへテスト文を投稿")
+    mode.add_argument("--test-report", type=Path, metavar="REPORT_MD", help="ローカルのreport.mdをTeamsへ分割テスト投稿（メール取得・分析・時刻更新なし）")
     parser.add_argument("--report-url", default=os.environ.get("REPORT_URL", ""), help="保存済みレポートArtifactのHTTPS URL")
     args = parser.parse_args()
     try:
         if args.test_notification:
             send_test_notification(args.config)
+        elif args.test_report is not None:
+            send_test_report(args.config, args.test_report)
         elif args.prepare_only:
             prepare(args.config, args.checkpoint_dir, args.publish_dir)
         elif args.notify_only:

@@ -33,6 +33,69 @@ class TeamsTests(unittest.TestCase):
                     scheduled.post_report(url, 'https://example.com/webhook', 60)
                 send.assert_not_called()
 
+    def test_titles_preserve_text_without_creating_markdown_links(self):
+        ranked = {'ses': [{'rank': 1, 'latest': {'title': '[案件](https://example.com)\r\n*開発*'}}],
+                  'contract': []}
+        rules = {'top_n': 10, 'ses': {'label': 'SES'}, 'contract': {'label': '受託'}}
+        payload = scheduled.card_payload('https://example.com/report', ranked, rules)
+        text = json.loads(payload)['attachments'][0]['content']['body'][0]['text']
+        self.assertIn(r'1. \[案件\]\(https://example\.com\)  \*開発\*', text)
+        self.assertIn('受託（上位10件まで）\n\n該当候補はありません。', text)
+
+    def card_texts(self, payloads):
+        return [json.loads(payload)['attachments'][0]['content']['body'][0]['text']
+                for payload in payloads]
+
+    def test_split_keeps_projects_whole_and_preserves_all_text(self):
+        projects = [f'### {i}位: 案件{i}\n' + ('日本語の案件詳細\\"\n' * 20)
+                    for i in range(1, 5)]
+        report = '# レポート\n\n## SES\n\n' + ''.join(projects) + '## 受託\n該当なし\n'
+        with patch.object(scheduled, 'MAX_CARD_BYTES', 2100):
+            payloads = scheduled.report_card_payloads('タイトル一覧', report)
+        texts = self.card_texts(payloads)
+        self.assertGreater(len(texts), 1)
+        self.assertTrue(all(len(payload) <= 2100 for payload in payloads))
+        self.assertTrue(any(sum(project in text for project in projects) >= 2 for text in texts))
+        for project in projects:
+            self.assertEqual(sum(project in text for text in texts), 1)
+        bodies = [text.split('\n\n', 1)[1] for text in texts]
+        self.assertEqual(''.join(bodies), 'タイトル一覧\n\n' + report)
+        for index, text in enumerate(texts, 1):
+            self.assertTrue(text.startswith(f'メール分析レポート（{index}/{len(texts)}）'))
+
+    def test_oversized_project_splits_without_loss_including_long_lines(self):
+        for detail in ('長い日本語😀\\"' * 1500, '案件の詳細\n' * 1500):
+            with self.subTest(detail=detail[:10]):
+                project = '### 1位: 巨大案件\n' + detail + '\n'
+                following = '### 2位: 小さい案件\n全体を一つに保つ\n'
+                with patch.object(scheduled, 'MAX_CARD_BYTES', 1400):
+                    payloads = scheduled.report_card_payloads('一覧', project + following)
+                self.assertTrue(all(len(payload) <= 1400 for payload in payloads))
+                texts = self.card_texts(payloads)
+                self.assertEqual(''.join(text.split('\n\n', 1)[1] for text in texts),
+                                 '一覧\n\n' + project + following)
+                self.assertEqual(sum(following in text for text in texts), 1)
+
+    def test_source_mail_headings_and_nested_fences_are_not_project_boundaries(self):
+        first = ('## SES\n### 1位: 案件\n参照元メール\n````text\n'
+                 '### 99位: メール内の見出し\n## 偽カテゴリ\n```\n本文\n````\n次の対応\n')
+        second = '### 2位: 次の案件\n本文\n'
+        self.assertEqual(scheduled.report_blocks(first + second), [first, second])
+
+    def test_posts_full_report_in_order_and_rewrites_only_real_data_links(self):
+        url = 'https://example.com/artifact'
+        report = ('# レポート\n[優先メール](ranked_emails.json)\n'
+                  '## SES\n### 1位: 案件\n```text\n'
+                  '[原文](ranked_emails.json)\n```\n' + '詳細\n' * 1000)
+        with patch.object(scheduled, 'MAX_CARD_BYTES', 1600), \
+                patch.object(scheduled, 'send_card') as send:
+            scheduled.post_report(url, 'https://example.com/webhook', 60, report=report)
+        payloads = [call.args[0] for call in send.call_args_list]
+        text = ''.join(self.card_texts(payloads))
+        self.assertIn(f'[優先メール]({url})', text)
+        self.assertIn('[原文](ranked_emails.json)', text)
+        self.assertEqual(self.sleep.call_count, len(payloads) - 1)
+
     def test_accepted_responses_and_safe_failures(self):
         for status, body in ((200, b'1'), (202, b''), (204, b'')):
             response = MagicMock(status=status)
@@ -129,6 +192,67 @@ class ScheduledRunTests(unittest.TestCase):
                 scheduled.send_test_notification(self.config_path)
         send.assert_not_called()
 
+    def test_cli_local_report_posts_all_parts_without_analysis_or_state_changes(self):
+        self.seed()
+        report_path = self.root / 'report.md'
+        projects = [f'### {i}位: 案件{i}\n' + '日本語の詳細\n' * 15 for i in range(1, 7)]
+        report = '# レポート\n## SES\n' + ''.join(projects)
+        report_path.write_text(report, encoding='utf-8-sig')
+        before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch.dict(os.environ, {'TEAMS_WEBHOOK_URL': 'https://example.com/secret'}, clear=True), \
+                patch.object(scheduled.sys, 'argv', ['scheduled_run.py', '--config', str(self.config_path),
+                                                   '--test-report', str(report_path)]), \
+                patch.object(app, 'run', side_effect=AssertionError('analysis')), \
+                patch.object(app, 'iter_fetch_mails', side_effect=AssertionError('IMAP')), \
+                patch.object(app, 'generate', side_effect=AssertionError('Gemini')), \
+                patch.object(app, 'record_last_run', side_effect=AssertionError('state update')), \
+                patch.object(scheduled, 'MAX_CARD_BYTES', 1700), \
+                patch.object(scheduled.time, 'sleep') as sleep, \
+                patch.object(scheduled, 'send_card') as send:
+            self.assertEqual(scheduled.main(), 0)
+        payloads = [call.args[0] for call in send.call_args_list]
+        texts = [json.loads(p)['attachments'][0]['content']['body'][0]['text'] for p in payloads]
+        self.assertGreater(len(payloads), 1)
+        self.assertTrue(all(len(p) <= 1700 for p in payloads))
+        self.assertEqual(sleep.call_count, len(payloads) - 1)
+        for i, text in enumerate(texts, 1):
+            self.assertTrue(text.startswith(f'【テスト投稿】メール分析レポート（{i}/{len(texts)}）'))
+        self.assertEqual(''.join(t.split('\n\n', 1)[1] for t in texts),
+                         'ローカルのreport.mdからのテスト投稿です。\n\n' + report)
+        for project in projects:
+            self.assertEqual(sum(project in text for text in texts), 1)
+        self.assertEqual(before, {p.relative_to(self.root): p.read_bytes()
+                                  for p in self.root.rglob('*') if p.is_file()})
+
+    def test_local_report_missing_empty_or_invalid_utf8_never_sends(self):
+        report_path = self.root / 'report.md'
+        for content in (None, b'', b' \r\n', b'\xff\xfe'):
+            with self.subTest(content=content):
+                if content is not None:
+                    report_path.write_bytes(content)
+                with patch.object(scheduled, 'send_card') as send:
+                    with self.assertRaises(app.ToolError):
+                        scheduled.send_test_report(self.config_path, report_path)
+                send.assert_not_called()
+
+    def test_local_report_requires_webhook_and_stops_after_failed_part(self):
+        report_path = self.root / 'report.md'
+        report_path.write_text('### 1位: 案件\n' + '詳細\n' * 1000, encoding='utf-8')
+        with patch.dict(os.environ, {'TEAMS_WEBHOOK_URL': ''}), \
+                patch.object(scheduled, 'send_card') as send:
+            with self.assertRaisesRegex(app.ToolError, 'TEAMS_WEBHOOK_URL'):
+                scheduled.send_test_report(self.config_path, report_path)
+        send.assert_not_called()
+        with patch.object(scheduled, 'MAX_CARD_BYTES', 1600), \
+                patch.object(scheduled.time, 'sleep'), \
+                patch.object(app, 'record_last_run', side_effect=AssertionError('state update')), \
+                patch.object(scheduled, 'send_card', side_effect=[None, app.ToolError('failed')]) as send:
+            with self.assertRaisesRegex(app.ToolError, 'failed'):
+                scheduled.send_test_report(self.config_path, report_path)
+        self.assertEqual(send.call_count, 2)
+        self.assertFalse(self.checkpoint.exists())
+        self.assertFalse(self.state.exists())
+
     def test_prepare_does_not_notify_or_advance_checkpoint_before_upload(self):
         self.seed()
         before = self.checkpoint.read_bytes()
@@ -158,6 +282,50 @@ class ScheduledRunTests(unittest.TestCase):
                                  'https://github.com/o/r/actions/runs/1/artifacts/2')
         self.assertEqual(self.checkpoint.read_bytes(), before)
         self.assertTrue((self.checkpoint_dir / 'pending.json').exists())
+
+    def test_failure_on_second_part_stops_delivery_and_preserves_checkpoint(self):
+        self.seed()
+        before = self.checkpoint.read_bytes()
+        with patch.object(app, 'iter_fetch_mails', return_value=iter([])):
+            scheduled.prepare(self.config_path, self.checkpoint_dir, self.publish_dir)
+        (self.publish_dir / 'report.md').write_text(
+            '## SES\n' + ''.join(f'### {i}位: 案件\n' + '詳細\n' * 300 for i in range(5)),
+            encoding='utf-8')
+        with patch.object(scheduled, 'MAX_CARD_BYTES', 2000), \
+                patch.object(scheduled.time, 'sleep'), \
+                patch.object(scheduled, 'send_card', side_effect=[None, app.ToolError('failed')]) as send:
+            with self.assertRaises(app.ToolError):
+                scheduled.notify(self.config_path, self.checkpoint_dir, self.publish_dir,
+                                 'https://github.com/o/r/actions/runs/1/artifacts/2')
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(self.checkpoint.read_bytes(), before)
+        self.assertEqual(json.loads(self.state.read_text())['last_run_at'], '2026-10-01T09:15:00+09:00')
+        self.assertTrue((self.checkpoint_dir / 'pending.json').exists())
+
+    def test_notification_lists_report_titles_by_category_in_rank_order(self):
+        with patch.object(app, 'iter_fetch_mails', return_value=iter([])):
+            scheduled.prepare(self.config_path, self.checkpoint_dir, self.publish_dir)
+        ranked = {
+            kind: [{'rank': i, 'latest': {'title': f'{kind}案件{i}', 'budget': '非公開予算'},
+                    'source_email': {'body': '非公開メール本文'}} for i in range(1, count + 1)]
+            for kind, count in [('ses', 10), ('contract', 2)]
+        }
+        app.write_json(self.publish_dir / 'ranked_emails.json', ranked)
+        rules = app.read_metadata(self.publish_dir / 'priority_rules.json')
+        rules['ses']['label'] = '保存済みSES条件'
+        app.write_json(self.publish_dir / 'priority_rules.json', rules)
+        with patch.object(scheduled, 'send_card') as send:
+            scheduled.notify(self.config_path, self.checkpoint_dir, self.publish_dir,
+                             'https://github.com/o/r/actions/runs/1/artifacts/2')
+        text = json.loads(send.call_args.args[0])['attachments'][0]['content']['body'][0]['text']
+        self.assertIn('[メール分析レポートを開く]', text)
+        self.assertIn('保存済みSES条件（上位10件まで）', text)
+        titles = [f'{i}. {kind}案件{i}' for kind in ('ses', 'contract')
+                  for i in range(1, len(ranked[kind]) + 1)]
+        positions = [text.index(title) for title in titles]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn('非公開予算', text)
+        self.assertNotIn('非公開メール本文', text)
 
     def test_zero_mail_delivery_commits_and_next_run_restores_checkpoint(self):
         with patch.object(app, 'iter_fetch_mails', return_value=iter([])), \

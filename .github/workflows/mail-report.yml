@@ -75,7 +75,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Send report link to Teams and commit checkpoint
+      - name: Send full report to Teams in parts and commit checkpoint
         env:
           SAKURA_MAIL_HOST: ${{ secrets.SAKURA_MAIL_HOST }}
           SAKURA_MAIL_USERNAME: ${{ secrets.SAKURA_MAIL_USERNAME }}

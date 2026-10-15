@@ -28,9 +28,17 @@ python mail_analyzer.py --config path/to/config.toml
 
 # Teamsへのテスト投稿（TEAMS_WEBHOOK_URLのみ必要）
 python scheduled_run.py --test-notification
+
+# ローカルのレポート全文をTeamsへ分割テスト投稿
+python scheduled_run.py --test-report output/report.md
+
+# 任意のレポートファイル・設定ファイルを指定
+python scheduled_run.py --config config.toml --test-report "path/to/report.md"
 ```
 
 期間指定の実行は、通常実行の前回時刻を更新しません。Teamsのテスト投稿後は投稿先チャネルで表示を確認してください。
+
+`--test-report`はUTF-8のMarkdownファイル単体で実行できます。認証情報は`TEAMS_WEBHOOK_URL`のみ必要で、指定した設定ファイルと同じフォルダの`.env`から読み込みます。メール取得・Geminiでの分析・処理済み時刻の更新は行いません。通常の投稿と同じ分割処理で複数案件をまとめ、各投稿に「【テスト投稿】」と通し番号を付けます。レポート内のローカルファイルへのリンクはTeamsから開けません。
 
 ## GitHub Actions（GHA）での手動実行
 
@@ -38,6 +46,10 @@ python scheduled_run.py --test-notification
 2. **Actions → Mail analysis and Teams report → Run workflow** を開きます。
 3. デフォルトブランチを選び、**Run workflow** をクリックします。
 4. 実行結果とTeamsの通知を確認します。
+
+Teamsには、SES・受託それぞれの上位10件（`top_n`設定に従う）の案件タイトル一覧とレポート全文を、通し番号付きで分割投稿します。上限に収まる複数の案件は1投稿にまとめ、次の案件が収まらない場合はその案件の手前で区切ります。1案件だけで投稿上限を超える場合に限り案件内でも分割します。日本語やカードのJSONを含む送信サイズを24,000バイト以内に収め、投稿間隔は1秒空けます。候補がないカテゴリは「該当候補はありません。」と表示します。保存済みレポートのダウンロード用リンクも掲載します。
+
+すべての分割投稿が受理されてから処理済み時刻を更新します。途中で失敗した場合、再実行時に送信済みの部分が重複することがあります。
 
 ## シークレット
 
