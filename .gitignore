@@ -1,0 +1,28 @@
+# Local overrides and secrets (shared config.toml is versioned)
+config.*.local.toml
+.env
+.env.*
+!.env.example
+
+# Generated mail data and analysis reports
+output/
+.gha-state/
+.gha-report/
+
+# Python bytecode, virtual environments, and tool caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.vscode/
+.coverage
+.coverage.*
+htmlcov/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+Desktop.ini

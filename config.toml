@@ -1,0 +1,52 @@
+# ローカル・GitHub Actions共通。認証情報は .env または環境変数で設定します。
+[logging]
+# 詳細ログの画面出力・ファイル保存の有無。false で無効にします。
+enabled = false
+
+[imap]
+port = 993
+folder = "INBOX"
+# IMAP接続・通信のタイムアウト（秒）。
+timeout_seconds = 60
+
+[gemini]
+model = "gemini-3.5-flash-lite"
+# API通信のタイムアウト（秒）と、1回の応答に使用する最大出力トークン数。
+timeout_seconds = 180
+max_output_tokens = 16384
+# 初回呼び出しに加えて再試行する回数（5なら最大6回の試行）。1以上で指定します。
+retries = 5
+retry_base_seconds = 15
+retry_max_wait_seconds = 120
+# Google側の割当量以下に設定。TPMの80%をローカル予算として使います。
+requests_per_minute = 5
+input_tokens_per_minute = 150000
+
+[analysis]
+# 期間指定なしは前回正常完了の実施時刻以降。記録のない初回のみ直近24時間。
+lookback_hours = 24
+# 判定条件は別ファイルで管理。相対パスはこの設定ファイルの場所が基準。
+priority_rules_file = "priority_rules.toml"
+# --start / --end を両方指定すると、指定日付の全日を対象にします。
+# start_date = "2026-10-01"
+# end_date = "2026-10-15"
+# 対象件数の上限。超えた場合は分析開始前に停止します。
+max_emails = 10000
+# 1件の本文の文字数上限。超えた分は省略し、記録に明示します。
+max_body_chars = 8000
+# 添付を含むメール全体のサイズ上限（バイト）。超えた場合は停止します。
+max_message_bytes = 10000000
+# 相対パスは config.toml の場所が基準です。実行ごとにサブフォルダを作成します。
+output_dir = "output"
+chunk_input_tokens = 30000
+report_input_tokens = 60000
+summary_output_tokens = 6000
+# 案件抽出と最終レポートの分析観点。
+instructions = """
+メールをSES要員募集・受託システム開発・その他に分類し、priority_rules_fileの条件で判定します。
+その他は優先対象から除外します。各カテゴリの上位10通までをメール単位で抽出します。
+"""
+
+[teams]
+# 投稿先は環境変数 TEAMS_WEBHOOK_URL で指定します。
+timeout_seconds = 60

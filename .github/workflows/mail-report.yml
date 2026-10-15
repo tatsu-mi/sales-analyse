@@ -1,0 +1,93 @@
+name: Mail analysis and Teams report
+
+on:
+  schedule:
+    # Daily 09:15 JST (00:15 UTC).
+    - cron: '15 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mail-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    # Keep one checkpoint stream on the default branch, including manual runs.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Run tests without external services
+        run: python -m unittest discover -s tests -q
+
+      - name: Validate TOML without credentials
+        run: python validate_config.py
+
+      - name: Restore checkpoint from the last successful run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_run=$(gh api --method GET "repos/$GH_REPO/actions/workflows/mail-report.yml/runs" \
+            -f branch="$DEFAULT_BRANCH" -f status=success -f per_page=1 \
+            --jq '.workflow_runs[0].id // empty')
+          if [ -n "$previous_run" ]; then
+            # Missing/expired artifacts must fail rather than silently skip old mail.
+            gh run download "$previous_run" --name mail-checkpoint --dir .gha-state
+            test -f .gha-state/checkpoint.json
+          else
+            echo 'First successful delivery: use analysis.lookback_hours from TOML.'
+          fi
+
+      - name: Analyze and prepare report
+        env:
+          SAKURA_MAIL_HOST: ${{ secrets.SAKURA_MAIL_HOST }}
+          SAKURA_MAIL_USERNAME: ${{ secrets.SAKURA_MAIL_USERNAME }}
+          SAKURA_MAIL_PASSWORD: ${{ secrets.SAKURA_MAIL_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: python scheduled_run.py --config config.toml --prepare-only
+
+      - name: Save report files
+        id: upload-report
+        uses: actions/upload-artifact@v7
+        with:
+          name: mail-report
+          path: .gha-report/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Send report link to Teams and commit checkpoint
+        env:
+          SAKURA_MAIL_HOST: ${{ secrets.SAKURA_MAIL_HOST }}
+          SAKURA_MAIL_USERNAME: ${{ secrets.SAKURA_MAIL_USERNAME }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          REPORT_URL: ${{ steps.upload-report.outputs.artifact-url }}
+        run: python scheduled_run.py --config config.toml --notify-only
+
+      - name: Save delivered checkpoint
+        uses: actions/upload-artifact@v7
+        with:
+          name: mail-checkpoint
+          path: .gha-state/checkpoint.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
