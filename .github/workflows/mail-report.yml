@@ -2,8 +2,7 @@ name: Mail analysis and Teams report
 
 on:
   schedule:
-    # Daily 09:00 JST (00:00 UTC).
-    - cron: '10 1 * * *'
+    - cron: '30 1 * * *'
   workflow_dispatch:
 
 permissions:
