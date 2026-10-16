@@ -40,6 +40,12 @@ python scheduled_run.py --config config.toml --test-report "path/to/report.md"
 
 `--test-report`はUTF-8のMarkdownファイル単体で実行できます。認証情報は`TEAMS_WEBHOOK_URL`のみ必要で、指定した設定ファイルと同じフォルダの`.env`から読み込みます。メール取得・Geminiでの分析・処理済み時刻の更新は行いません。通常の投稿と同じ分割処理で複数案件をまとめ、各投稿に「【テスト投稿】」と通し番号を付けます。レポート内のローカルファイルへのリンクはTeamsから開けません。
 
+## GitHub Actions（GHA）の定期実行
+
+日本時間の月〜金曜7:00を予定時刻とし、起動時の日本の日付が土日・祝日・振替休日、または毎年12月29日〜1月4日（両端を含む）ならメール分析とTeams通知をスキップします。祝日は[内閣府の祝日CSV](https://www8.cao.go.jp/chosei/shukujitsu/gaiyou.html)で判定します。データを取得できない場合や当年のデータがない場合は、分析・通知を行わず失敗として記録します。GHAのスケジュールには遅延が発生することがあります。
+
+休みにスキップしても処理済み時刻は更新せず、次の通常実行で前回正常配信以降のメールを対象にします。手動実行は休日判定を省略し、休みの日でも実行できます。
+
 ## GitHub Actions（GHA）での手動実行
 
 1. GitHubの **Settings → Secrets and variables → Actions → Repository secrets** に「シークレット」の5項目を登録します。

@@ -15,9 +15,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  calendar:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_run: ${{ steps.calendar.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Check Japanese business day
+        id: calendar
+        run: python check_business_day.py
+
   report:
     # Keep one checkpoint stream on the default branch, including manual runs.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: calendar
+    if: needs.calendar.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
@@ -45,9 +63,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          previous_run=$(gh api --method GET "repos/$GH_REPO/actions/workflows/mail-report.yml/runs" \
-            -f branch="$DEFAULT_BRANCH" -f status=success -f per_page=1 \
-            --jq '.workflow_runs[0].id // empty')
+          successful_runs=$(gh api --method GET --paginate "repos/$GH_REPO/actions/workflows/mail-report.yml/runs" \
+            -f branch="$DEFAULT_BRANCH" -f status=success -f per_page=100 \
+            --jq '.workflow_runs[].id')
+          previous_run=''
+          for candidate in $successful_runs; do
+            # Calendar-only success has no delivered checkpoint. Ignore those runs.
+            skipped=$(gh api --method GET "repos/$GH_REPO/actions/runs/$candidate/jobs" \
+              -f per_page=100 --jq 'any(.jobs[]; .name == "report" and .conclusion == "skipped")')
+            if [ "$skipped" = true ]; then
+              continue
+            fi
+            previous_run="$candidate"
+            break
+          done
           if [ -n "$previous_run" ]; then
             # Missing/expired artifacts must fail rather than silently skip old mail.
             gh run download "$previous_run" --name mail-checkpoint --dir .gha-state
