@@ -589,6 +589,7 @@ def write_report(output, metadata, summary):
               f"再送: {metadata.get('duplicate_email_count', 0)} 件\n\n"
               f"件名の機械除外: {metadata.get('mechanical_excluded_count', 0)} 件 / "
               f"件名のAI除外: {metadata.get('ai_excluded_count', 0)} 件 / "
+              f"上限超過による除外: {metadata.get('limit_excluded_count', 0)} 件 / "
               f"本文分析対象: {metadata.get('analysis_target_count', metadata.get('unique_email_count', metadata['count']))} 件\n\n"
               "選別後の抽出: [extracted_emails.jsonl](extracted_emails.jsonl) / "
               "案件一覧・条件履歴: [opportunities.jsonl](opportunities.jsonl) / "

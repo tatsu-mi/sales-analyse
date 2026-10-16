@@ -175,7 +175,7 @@ def post_report(report_url, webhook_url, timeout, ranked=None, rules=None, repor
 def send_report_cards(payloads, webhook_url, timeout):
     for index, payload in enumerate(payloads):
         if index:
-            time.sleep(1)
+            time.sleep(3)
         send_card(payload, webhook_url, timeout)
 
 

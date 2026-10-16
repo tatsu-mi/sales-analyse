@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -248,6 +249,46 @@ class PipelineTests(unittest.TestCase):
         stats = json.loads((instance.output / 'statistics.json').read_text(encoding='utf-8'))
         self.assertEqual(stats['raw_emails'], 3)
         self.assertEqual(sum(stats['raw_emails_by_kind'].values()), 1)
+
+    def test_analysis_cap_boundaries_keep_newest_received_not_input_or_uid_order(self):
+        start = datetime.fromisoformat('2026-10-01T09:00:00+09:00')
+        for count in (999, 1000, 1001):
+            with self.subTest(count=count):
+                mails = [mail(count - i, str(i), (start + timedelta(seconds=i)).isoformat())
+                         for i in range(count)]
+                instance = self.make(list(reversed(mails)))
+                with closing(sqlite3.connect(':memory:')) as connection:
+                    instance.prepare(connection)
+                    instance.screen_titles(connection)
+                    selected = {row[0] for row in connection.execute('SELECT uid FROM selected')}
+                self.assertEqual(selected, {item['uid'] for item in mails[-1000:]})
+                self.assertEqual(instance.metadata['analysis_target_count'], min(count, 1000))
+                self.assertEqual(instance.metadata['limit_excluded_count'], max(0, count - 1000))
+
+    def test_analysis_cap_applies_after_both_title_filters_and_limits_body_extraction(self):
+        self.config['priority_rules']['prefilter']['enabled'] = True
+        self.screen_excluded = {'1002'}
+        start = datetime.fromisoformat('2026-10-01T09:00:00+09:00')
+        mails = [mail(i, str(i), (start + timedelta(seconds=i)).isoformat()) for i in range(1004)]
+        mails[-1]['subject'] = '社員紹介'
+        instance = self.make(list(reversed(mails)))
+        instance.extract_limit = 1000000
+        report = instance.run()
+        screened = {item['uid'] for batch in self.screen_calls for item in batch}
+        self.assertEqual(screened, {str(i) for i in range(1003)})
+        analyzed = {item['uid'] for batch in self.calls for item in batch}
+        self.assertEqual(analyzed, {str(i) for i in range(2, 1002)})
+        self.assertEqual(instance.metadata['mechanical_excluded_count'], 1)
+        self.assertEqual(instance.metadata['ai_excluded_count'], 1)
+        self.assertEqual(instance.metadata['limit_excluded_count'], 2)
+        self.assertEqual(instance.metadata['analysis_target_count'], 1000)
+        self.assertEqual(instance.metadata['extracted_unique_count'], 1000)
+        stats = json.loads((instance.output / 'statistics.json').read_text(encoding='utf-8'))
+        self.assertEqual(stats['limit_excluded_count'], 2)
+        self.assertEqual(stats['analysis_target_count'], 1000)
+        app.write_report(instance.output, instance.metadata, report)
+        self.assertIn('上限超過による除外: 2 件',
+                      (instance.output / 'report.md').read_text(encoding='utf-8'))
 
     def test_report_embeds_latest_source_mail_without_rewriting_it(self):
         self.extracted = {'1': [opportunity()], '2': [opportunity()]}

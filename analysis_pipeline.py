@@ -15,6 +15,7 @@ from pathlib import Path
 from uuid import uuid4
 
 VERSION = 3
+MAX_ANALYSIS_EMAILS = 1000
 KINDS = ("ses", "contract", "other")
 TEXT_FIELDS = ("title", "project_id", "contact", "budget", "start", "location", "contract",
                "deadline_iso", "notes", "evidence")
@@ -337,10 +338,19 @@ class Pipeline:
                     pending = []
             if pending:
                 select(pending)
+            # Apply the body-analysis cap only after all title exclusions.
+            counts["limit_excluded_count"] = max(0, counts["analysis_target_count"] - MAX_ANALYSIS_EMAILS)
+            connection.execute(
+                "DELETE FROM selected WHERE uid IN ("
+                "SELECT uid FROM mails JOIN selected USING(uid) "
+                "ORDER BY julianday(received) DESC, received DESC, uid DESC LIMIT -1 OFFSET ?)",
+                (MAX_ANALYSIS_EMAILS,))
+            counts["analysis_target_count"] -= counts["limit_excluded_count"]
         self.metadata.update(counts)
         self.save_progress()
         print(f"件名選別：機械除外 {counts['mechanical_excluded_count']:,}通 / "
-              f"AI除外 {counts['ai_excluded_count']:,}通 / 本文分析 {counts['analysis_target_count']:,}通", flush=True)
+              f"AI除外 {counts['ai_excluded_count']:,}通 / 上限超過による除外 {counts['limit_excluded_count']:,}通 / "
+              f"本文分析 {counts['analysis_target_count']:,}通", flush=True)
 
     def screen_part(self, items, prompt):
         def validate(answer, batch):
@@ -479,7 +489,7 @@ class Pipeline:
                     candidate_count += 1
                 file.write(encoded(value) + "\n")
         stats = {"raw_emails": self.metadata["count"], "unique_emails": self.metadata["unique_email_count"],
-                 **{key: self.metadata[key] for key in ("mechanical_excluded_count", "ai_excluded_count", "analysis_target_count")},
+                 **{key: self.metadata[key] for key in ("mechanical_excluded_count", "ai_excluded_count", "limit_excluded_count", "analysis_target_count")},
                  "exact_duplicate_emails": self.metadata["duplicate_email_count"],
                  "raw_emails_by_kind": dict(raw_kinds), "unique_emails_by_kind": dict(unique_kinds),
                  "opportunity_groups": candidate_count + closed_count, "potential_candidates": candidate_count,
