@@ -95,7 +95,7 @@ class TeamsTests(unittest.TestCase):
         self.assertIn(f'[優先メール]({url})', text)
         self.assertIn('[原文](ranked_emails.json)', text)
         self.assertEqual(self.sleep.call_count, len(payloads) - 1)
-        self.assertTrue(all(call.args == (3,) for call in self.sleep.call_args_list))
+        self.assertTrue(all(call.args == (10,) for call in self.sleep.call_args_list))
 
     def test_accepted_responses_and_safe_failures(self):
         for status, body in ((200, b'1'), (202, b''), (204, b'')):
@@ -216,7 +216,7 @@ class ScheduledRunTests(unittest.TestCase):
         self.assertGreater(len(payloads), 1)
         self.assertTrue(all(len(p) <= 1700 for p in payloads))
         self.assertEqual(sleep.call_count, len(payloads) - 1)
-        self.assertTrue(all(call.args == (3,) for call in sleep.call_args_list))
+        self.assertTrue(all(call.args == (10,) for call in sleep.call_args_list))
         for i, text in enumerate(texts, 1):
             self.assertTrue(text.startswith(f'【テスト投稿】メール分析レポート（{i}/{len(texts)}）'))
         self.assertEqual(''.join(t.split('\n\n', 1)[1] for t in texts),
