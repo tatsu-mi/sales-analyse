@@ -11,6 +11,8 @@ from unittest.mock import Mock, patch
 import analysis_pipeline as pipeline
 import mail_analyzer as app
 import title_filter
+import engineer_matching
+import scheduled_run
 
 
 def mail(uid, body="mail", received="2026-10-01T09:00:00+09:00"):
@@ -22,7 +24,8 @@ def opportunity(budget="70万円/月", deadline="", status="open", project_id="P
     value = dict.fromkeys(pipeline.TEXT_FIELDS, "")
     value.update(title="Python development", project_id=project_id, budget=budget,
                  deadline_iso=deadline, status=status, skills=["Python"], notes=notes, kind="ses",
-                 assessments=[{"criterion": i, "state": "unknown", "evidence": ""} for i in range(1, 8)])
+                 assessments=[{"criterion": i, "state": "unknown", "evidence": ""}
+                              for i in range(1, len(pipeline.prioritization.load_rules('priority_rules.toml')['ses']['criteria']) + 1)])
     return value
 
 
@@ -35,6 +38,7 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.config = app.load_config(Path("config.example.toml"))
+        self.config["analysis"].pop("skill_sheets_dir", None)
         self.config["priority_rules"]["prefilter"]["enabled"] = False
         self.config["analysis"].update(start_date="2026-09-27", end_date="2026-10-03",
                                        chunk_input_tokens=1024, report_input_tokens=1024)
@@ -101,6 +105,164 @@ class PipelineTests(unittest.TestCase):
         self.assertGreater(len(parts), 1)
         with self.assertRaises(app.ToolError):
             list(instance.fit([mail(7, "x" * 3000)], "prompt", instance.settings, 1024))
+
+    def test_engineer_shortlists_check_all_candidates_and_keep_contract_independent(self):
+        self.extracted = {str(i): [opportunity(project_id=f'P-{i}')] for i in range(15)}
+        contract = opportunity(project_id='C-1')
+        contract.update(kind='contract', assessments=[
+            {'criterion': i + 1, 'state': 'match', 'evidence': '開発相談'}
+            for i in range(len(self.config['priority_rules']['contract']['criteria']))])
+        self.extracted['15'] = [contract]
+        mails = [mail(i, str(i)) for i in range(16)]
+        instance = self.make(mails)
+        instance.profiles = [{'file': 'A.pdf', 'sha256': 'a', 'text': 'Python'},
+                             {'file': 'B.pdf', 'sha256': 'b', 'text': 'Java'}]
+        generate = instance.api.generate
+        match_calls = []
+
+        def matching(*args, **kwargs):
+            if kwargs.get('response_schema') != engineer_matching.SCHEMA:
+                return generate(*args, **kwargs)
+            items = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
+            match_calls.extend(items)
+            engineer_a = 'A.pdf' in args[2]
+            return json.dumps({'records': [dict(id=item['id'],
+                state=('match' if engineer_a or item['project']['project_id'] == 'P-0' else 'mismatch'),
+                evidence='案件: Python / スキルシート: Python経験',
+                commute=dict(mode='full_remote', nearest_station='', workplace='', minutes=-1,
+                             route='', evidence='出社不要のフルリモート')) for item in items]})
+
+        with patch.object(instance.api, 'generate', side_effect=matching):
+            report = instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        self.assertEqual(len(match_calls), 30)
+        first, second = ranked['ses_by_engineer']
+        self.assertEqual(len(first['entries']), 10)
+        self.assertEqual([entry['uid'] for entry in second['entries']], ['0'])
+        self.assertEqual([entry['uid'] for entry in ranked['contract']], ['15'])
+        self.assertEqual(ranked['ses'], [])
+        self.assertEqual(second['entries'][0]['source_email']['body'], '0')
+        self.assertIn('A\\.pdf', report)
+        self.assertIn('B\\.pdf', report)
+        self.assertIn('スキルシートとの照合:', report)
+        card = scheduled_run.card_payload('https://example.com/report', ranked, self.config['priority_rules']).decode()
+        self.assertIn('A', card)
+        self.assertIn('B', card)
+        self.assertIn('受託', card)
+        profiles = instance.profiles
+        match_calls.clear()
+        second_run = self.make(mails)
+        second_run.profiles = profiles
+        with patch.object(second_run.api, 'generate', side_effect=matching):
+            second_run.run()
+        self.assertFalse(match_calls)
+        changed_run = self.make(mails)
+        changed_run.profiles = [dict(profiles[0], text='Python 5年', sha256='new'), profiles[1]]
+        with patch.object(changed_run.api, 'generate', side_effect=matching):
+            changed_run.run()
+        self.assertEqual(len(match_calls), 15)
+
+    def test_engineer_response_truncation_splits_without_losing_candidates(self):
+        instance = self.make([mail(1)])
+        items = [{'id': str(i)} for i in range(3)]
+
+        def matching(*args, **kwargs):
+            batch = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
+            if len(batch) > 1:
+                raise app.OutputLimitError('truncated')
+            return json.dumps({'records': [dict(id=batch[0]['id'], state='unknown', evidence='要確認',
+                commute=dict(mode='unknown', nearest_station='', workplace='', minutes=-1,
+                             route='', evidence='勤務地不明'))]})
+
+        with patch.object(instance.api, 'generate', side_effect=matching):
+            batch, text, tokens = next(instance.groups(items, 'prompt', instance.settings, instance.report_limit, engineer_matching.SCHEMA))
+            records = instance.match_part(batch, text, tokens, 'prompt', 'test')
+        self.assertEqual([r['id'] for r in records], ['0', '1', '2'])
+
+    def test_no_profiles_has_no_shared_ses_shortlist(self):
+        self.extracted = {'1': [opportunity()]}
+        instance = self.make([mail(1)])
+        instance.profiles = []
+        report = instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        self.assertEqual(ranked['ses_by_engineer'], [])
+        self.assertEqual(ranked['ses'], [])
+        self.assertIn('PDF未登録', report)
+
+    def test_commute_is_required_per_engineer_and_contract_is_independent(self):
+        self.extracted = {str(i): [opportunity(project_id=f'P-{i}')] for i in range(6)}
+        contract = opportunity(project_id='C-1')
+        contract.update(kind='contract', assessments=[dict(criterion=i + 1, state='match', evidence='開発相談')
+                        for i in range(len(self.config['priority_rules']['contract']['criteria']))])
+        self.extracted['6'] = [contract]
+        instance = self.make([mail(i, str(i)) for i in range(7)])
+        instance.profiles = [dict(file='A.pdf', sha256='a', text='最寄り駅: 仙台駅'),
+                             dict(file='B.pdf', sha256='b', text='最寄り駅: 東京駅')]
+        generate = instance.api.generate
+
+        def matching(*args, **kwargs):
+            if kwargs.get('response_schema') != engineer_matching.SCHEMA:
+                return generate(*args, **kwargs)
+            self.assertIn('片道90分以内', args[2])
+            self.assertIn('初日や研修時のみ出社', args[2])
+            batch = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
+            records = []
+            for item in batch:
+                number = int(item['project']['project_id'].split('-')[1])
+                commute = dict(mode='onsite', nearest_station='仙台駅', workplace='就業先',
+                               minutes=90 if 'A.pdf' in args[2] else 91, route='電車と徒歩', evidence='資料の経路')
+                if number == 1:
+                    commute['minutes'] = 91
+                elif number == 2:
+                    commute.update(mode='full_remote', minutes=-1, nearest_station='', route='', evidence='出社不要')
+                elif number == 3:
+                    commute['minutes'] = -1
+                elif number == 4:
+                    commute['nearest_station'] = ''
+                elif number == 5:
+                    commute.update(mode='hybrid', minutes=91)
+                records.append(dict(id=item['id'], state='match', evidence='スキル適合', commute=commute))
+            return json.dumps(dict(records=records))
+
+        with patch.object(instance.api, 'generate', side_effect=matching):
+            report = instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        first, second = ranked['ses_by_engineer']
+        self.assertEqual({e['uid'] for e in first['entries']}, {'0', '2'})
+        self.assertEqual([e['uid'] for e in second['entries']], ['2'])
+        self.assertEqual([e['uid'] for e in ranked['contract']], ['6'])
+        self.assertIn('片道90分', report)
+        self.assertIn('フルリモート（出社不要）', report)
+        self.assertIn('通勤の根拠:', report)
+
+    def test_shared_rules_exclude_projects_for_every_engineer_before_matching(self):
+        accepted = opportunity(project_id='P-OK')
+        rejected = opportunity(project_id='P-NG')
+        rejected['assessments'][0].update(state='mismatch', evidence='共通の案件地域条件に不適合')
+        self.extracted = {'1': [accepted], '2': [rejected]}
+        instance = self.make([mail(1, 'accepted'), mail(2, 'rejected')])
+        instance.profiles = [dict(file='A.pdf', sha256='a', text='Python'),
+                             dict(file='B.pdf', sha256='b', text='Python')]
+        generate = instance.api.generate
+        matched_projects = []
+
+        def matching(*args, **kwargs):
+            if kwargs.get('response_schema') != engineer_matching.SCHEMA:
+                return generate(*args, **kwargs)
+            batch = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
+            matched_projects.extend(item['project']['project_id'] for item in batch)
+            return json.dumps({'records': [dict(id=item['id'], state='match', evidence='スキル適合',
+                commute=dict(mode='full_remote', nearest_station='', workplace='', minutes=-1,
+                             route='', evidence='出社不要')) for item in batch]})
+
+        with patch.object(instance.api, 'generate', side_effect=matching):
+            report = instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        self.assertEqual(matched_projects, ['P-OK', 'P-OK'])
+        for group in ranked['ses_by_engineer']:
+            self.assertEqual([e['uid'] for e in group['entries']], ['1'])
+            self.assertEqual(group['entries'][0]['verification'], '要確認')
+        self.assertIn('全エンジニアに共通で適用', report)
 
     def test_exact_duplicate_preserves_latest_uid_and_all_sources(self):
         instance = self.make([mail(1), mail(2, received="2026-10-02T09:00:00+09:00"), mail(3, "changed")])

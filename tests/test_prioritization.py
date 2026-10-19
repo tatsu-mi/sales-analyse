@@ -37,7 +37,7 @@ class PriorityTests(unittest.TestCase):
             self.assertEqual([value["rank"] for value in result[kind]], list(range(1, 11)))
 
     def test_mismatch_closed_expired_unknown_kind_are_excluded(self):
-        mismatch = self.candidate(1, states=["match"] * 6 + ["mismatch"])
+        mismatch = self.candidate(1, states=["match"] * (len(self.rules['ses']['criteria']) - 1) + ["mismatch"])
         closed, expired, other = (self.candidate(i) for i in range(2, 5))
         closed["latest"]["status"] = "closed"
         expired["expired_at_period_end"] = True
@@ -47,7 +47,7 @@ class PriorityTests(unittest.TestCase):
 
     def test_complete_match_beats_newer_unknown_and_unknown_is_labeled(self):
         complete = self.candidate(1, received="2026-10-15T01:00:00+09:00")
-        unknown = self.candidate(2, states=["match"] * 6 + ["unknown"])
+        unknown = self.candidate(2, states=["match"] * (len(self.rules['ses']['criteria']) - 1) + ["unknown"])
         result = priority.shortlist([unknown, complete], self.rules)["ses"]
         self.assertEqual([value["uid"] for value in result], ["1", "2"])
         self.assertEqual([value["verification"] for value in result], ["適合", "要確認"])
@@ -57,10 +57,10 @@ class PriorityTests(unittest.TestCase):
         self.assertNotIn("| 条件 |", report)
 
     def test_best_project_represents_a_mail_in_each_category(self):
-        weak = self.candidate(1, states=["unknown"] * 7)
+        weak = self.candidate(1, states=["unknown"] * len(self.rules['ses']['criteria']))
         strong, contract = self.candidate(1), self.candidate(1, "contract")
         result = priority.shortlist([weak, strong, contract], self.rules)
-        self.assertEqual(result["ses"][0]["matches"], 7)
+        self.assertEqual(result["ses"][0]["matches"], len(self.rules['ses']['criteria']))
         self.assertEqual(result["contract"][0]["matches"], 4)
 
     def test_recent_and_explicitly_open_break_ties(self):
@@ -169,8 +169,8 @@ class TimeWindowTests(unittest.TestCase):
         client.uid.side_effect = uid
         with patch.object(app.imaplib, "IMAP4_SSL", return_value=client):
             mails = list(app.iter_fetch_mails(config, start, stop))
-        self.assertEqual([mail["uid"] for mail in mails], ["1", "2"])
-        self.assertEqual(read_uids, [1, 2])
+        self.assertEqual([mail["uid"] for mail in mails], ["2", "1"])
+        self.assertEqual(read_uids, [2, 1])
         client.select.assert_called_once_with('"INBOX"', readonly=True)
 
     def test_default_24_hours_crosses_midnight_and_ignores_old_config_dates(self):

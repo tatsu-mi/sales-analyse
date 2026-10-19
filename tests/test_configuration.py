@@ -55,6 +55,19 @@ class ConfigurationTests(unittest.TestCase):
     def load(self):
         return app.load_config(self.path, load_environment=False)
 
+    def test_default_mail_limit_is_2000(self):
+        self.assertEqual(self.load()['analysis']['max_emails'], 2000)
+        self.path.write_text(self.source.replace('max_emails = 2000\n', ''), encoding='utf-8')
+        self.assertEqual(self.load()['analysis']['max_emails'], 2000)
+
+    def test_skill_sheet_directory_is_resolved_relative_to_config(self):
+        self.assertEqual(Path(self.load()['analysis']['skill_sheets_dir']), self.root / 'スキルシート')
+        for invalid in ('""', 'false', '123'):
+            self.path.write_text(self.source.replace('skill_sheets_dir = "スキルシート"',
+                                                   f'skill_sheets_dir = {invalid}'), encoding='utf-8')
+            with self.subTest(invalid=invalid), self.assertRaises(app.ToolError):
+                self.load()
+
     def test_offline_validation_needs_no_credentials_and_never_reads_env_or_network(self):
         (self.root / '.env').write_text('intentionally invalid', encoding='utf-8')
         with patch.dict(os.environ, {}, clear=True), \
@@ -92,7 +105,7 @@ class ConfigurationTests(unittest.TestCase):
         invalid = [self.source.replace('port = 993', 'port = 65536'),
                    self.source.replace('port = 993', 'port = true'),
                    self.source.replace('model = "gemini-3.5-flash-lite"', 'model = 123'),
-                   self.source.replace('max_emails = 10000', 'max_emails = 0'),
+                   self.source.replace('max_emails = 2000', 'max_emails = 0'),
                    self.source.replace('lookback_hours = 24', 'lookback_hour = 24'),
                    self.source.replace('[imap]', '[impa]'),
                    self.source.replace('retry_max_wait_seconds = 120', 'retry_max_wait_seconds = 1'),

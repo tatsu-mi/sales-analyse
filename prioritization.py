@@ -56,9 +56,10 @@ def shortlist(values, rules):
             continue
         matches = sum(check["state"] == "match" for check in checks)
         # Explicitly open, then recent mail, then stable UID are tie breakers.
-        score = (matches, latest["status"] == "open", value["received_at"], value["uid"])
+        engineer_state = value.get("engineer_match", {}).get("state", "match")
+        score = (engineer_state == "match", matches, latest["status"] == "open", value["received_at"], value["uid"])
         entry = dict(value, matches=matches, total_criteria=len(checks),
-                     verification="適合" if matches == len(checks) else "要確認")
+                     verification="適合" if matches == len(checks) and engineer_state == "match" else "要確認")
         previous = by_kind[kind].get(value["uid"])
         if previous is None or score > previous[0]:
             by_kind[kind][value["uid"]] = (score, entry)
@@ -88,6 +89,18 @@ def render_source_mail(mail):
     return "参照元メール\n\n" + fence + "text\n" + content + "\n" + fence + note
 
 
+def report_sections(ranked, rules):
+    if "ses_by_engineer" in ranked:
+        if not ranked["ses_by_engineer"]:
+            yield rules["ses"]["label"] + "（スキルシートPDF未登録）", []
+        for group in ranked["ses_by_engineer"]:
+            name = re.sub(r'([\\`*_{}\[\]()#+.!|>~-])', r'\\\1', group['file'].replace('\n', ' ').replace('\r', ' '))
+            yield f"{rules['ses']['label']} / {name}", group["entries"]
+    else:
+        yield rules["ses"]["label"], ranked["ses"]
+    yield rules["contract"]["label"], ranked["contract"]
+
+
 def render_report(ranked, rules):
     def text(value):
         return str(value or "不明").replace("\n", " ").replace("\r", " ").replace("|", "\\|")
@@ -95,11 +108,15 @@ def render_report(ranked, rules):
     lines = ["条件に明確な不適合がある案件、募集終了・期限切れ案件、その他メールは優先対象から除外します。",
              "適合条件数、募集中の明記、受信日時の新しさの順で選定します。不明条件は要確認として順位を下げます。",
              "同じメールに複数案件がある場合は、カテゴリごとに最も適合する案件で代表します。", ""]
-    for kind in KINDS:
-        lines += [f"## {rules[kind]['label']}（上位{rules['top_n']}件まで）", ""]
-        if not ranked[kind]:
+    if "ses_by_engineer" in ranked:
+        lines += ["priority_rules.tomlのSES条件は、案件地域を含め全エンジニアに共通で適用し、PDFごとのスキル・通勤条件を追加判定します。", ""]
+        lines += ["SESはPDFごとに選定し、スキル適合を確認できた候補を優先します。同じ案件が複数エンジニアの候補に入る場合があります。", ""]
+        lines += ["勤務地は最寄り駅から片道90分以内、または出社不要のフルリモートを必須とします。通勤時間が確認できない候補は掲載しません。", ""]
+    for label, entries in report_sections(ranked, rules):
+        lines += [f"## {label}（上位{rules['top_n']}件まで）", ""]
+        if not entries:
             lines += ["該当候補はありません。", ""]
-        for entry in ranked[kind]:
+        for entry in entries:
             project = entry["latest"]
             lines += [f"### {entry['rank']}位: {text(project['title'])}", "",
                       f"判定: {entry['verification']}（適合 {entry['matches']}/{entry['total_criteria']}）  ",
@@ -108,7 +125,15 @@ def render_report(ranked, rules):
                       f"単価・予算: {text(project['budget'])} / 開始・期間: {text(project['start'])}  ",
                       f"勤務地・勤務条件: {text(project['location'])} / スキル: {text(', '.join(project['skills']))}  ",
                       f"商流・制約: {text(project['contract'])} / 懸念: {text(project['notes'])}", ""]
-            pending = any(check["state"] == "unknown" for check in project["assessments"])
+            if "engineer_match" in entry:
+                lines += [f"スキルシートとの照合: {text(entry['engineer_match']['evidence'])}", ""]
+                commute = entry['engineer_match'].get('commute')
+                if commute:
+                    location = ("フルリモート（出社不要）" if commute['mode'] == 'full_remote' else
+                                f"{text(commute['nearest_station'])} → {text(commute['workplace'])} / 片道{commute['minutes']}分 / {text(commute['route'])}")
+                    lines += [f"通勤条件: {location}  ", f"通勤の根拠: {text(commute['evidence'])}", ""]
+            pending = (any(check["state"] == "unknown" for check in project["assessments"])
+                       or entry.get("engineer_match", {}).get("state") == "unknown")
             action = "未確認の案件条件を問い合わせる" if pending else "募集継続・参画体制を確認してアプローチする"
             lines += ["", f"次の対応: {action}。", ""]
     return "\n".join(lines)

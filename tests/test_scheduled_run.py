@@ -145,6 +145,7 @@ class ScheduledRunTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        (self.root / 'スキルシート').mkdir()
         self.config_path = self.root / 'config.toml'
         config = Path('config.toml').read_text(encoding='utf-8')
         rules = (Path.cwd() / 'priority_rules.toml').as_posix()

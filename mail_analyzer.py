@@ -118,7 +118,7 @@ def load_config(path, *, load_environment=True):
                    "retry_max_wait_seconds", "requests_per_minute", "input_tokens_per_minute"},
         "analysis": {"lookback_hours", "priority_rules_file", "start_date", "end_date", "max_emails",
                      "max_body_chars", "max_message_bytes", "output_dir", "chunk_input_tokens",
-                     "report_input_tokens", "summary_output_tokens", "instructions"},
+                     "report_input_tokens", "summary_output_tokens", "instructions", "skill_sheets_dir"},
         "teams": {"timeout_seconds"},
     }
     for section, keys in (("imap", ("host", "username", "password")), ("gemini", ("api_key",)),
@@ -142,7 +142,7 @@ def load_config(path, *, load_environment=True):
         "gemini": {"timeout_seconds": 180, "max_output_tokens": 16384, "retries": 5,
                    "retry_base_seconds": 15, "retry_max_wait_seconds": 120,
                    "requests_per_minute": 5, "input_tokens_per_minute": 150000},
-        "analysis": {"max_emails": 10000, "max_body_chars": 8000,
+        "analysis": {"max_emails": 2000, "max_body_chars": 8000,
                      "max_message_bytes": 10000000, "chunk_input_tokens": 30000,
                      "report_input_tokens": 60000, "summary_output_tokens": 6000},
     }.items():
@@ -158,6 +158,12 @@ def load_config(path, *, load_environment=True):
     teams = config.setdefault("teams", {})
     teams["timeout_seconds"] = positive(teams, "timeout_seconds", 60)
     analysis = config["analysis"]
+    if "skill_sheets_dir" in analysis:
+        directory = analysis["skill_sheets_dir"]
+        if not isinstance(directory, str) or not directory.strip():
+            raise ToolError("analysis.skill_sheets_dir にスキルシートフォルダを指定してください。")
+        directory = Path(directory)
+        analysis["skill_sheets_dir"] = str(directory if directory.is_absolute() else path.resolve().parent / directory)
     analysis["lookback_hours"] = positive(analysis, "lookback_hours", 24)
     rules_path = analysis.get("priority_rules_file", "priority_rules.toml")
     if not isinstance(rules_path, str) or not rules_path.strip():
@@ -292,7 +298,11 @@ def iter_fetch_mails(config, start, stop):
             progress("期間検索")
             result = checked(client.uid("search", None, "SINCE", since, "BEFORE", before), "期間検索")
             LOGGER.info("IMAP 検索結果=%s件", len((result[0] or b"").split()))
-            for uid in (result[0] or b"").split():
+            # Higher UIDs are newer arrivals in this mailbox; SEARCH order is unspecified.
+            for uid in sorted((result[0] or b"").split(), key=int, reverse=True):
+                if count >= limits["max_emails"]:
+                    LOGGER.info("IMAP 取得上限 max_emails=%s に達したため取得を終了します。", count)
+                    break
                 progress("日時・サイズ取得", uid.decode("ascii", errors="replace"))
                 data = checked(client.uid("fetch", uid, "(INTERNALDATE RFC822.SIZE)"), "日時取得")
                 metadata = b" ".join(item for item in data if isinstance(item, bytes))
@@ -300,8 +310,6 @@ def iter_fetch_mails(config, start, stop):
                 received = internal_date(metadata)
                 if not start <= received < stop:
                     continue
-                if count >= limits["max_emails"]:
-                    raise ToolError("対象メールがmax_emailsを超えました。期間を短くするか設定を増やしてください。分析は開始していません。")
                 size = re.search(rb"RFC822.SIZE (\d+)", metadata)
                 if not size:
                     raise ToolError("メールサイズを取得できませんでした。")
@@ -627,6 +635,7 @@ def configure_logging(config, log_file=None):
 def dataset_key(config, start, stop):
     identity = {key: config["imap"][key] for key in ("host", "port", "username", "folder")}
     identity.update(start=start.isoformat(), stop=stop.isoformat(),
+                    max_emails=config["analysis"]["max_emails"],
                     max_body_chars=config["analysis"]["max_body_chars"],
                     max_message_bytes=config["analysis"]["max_message_bytes"])
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -843,8 +852,16 @@ def run(args):
         return
     if not count:
         write_json(output / "priority_rules.json", config["priority_rules"])
-        write_json(output / "ranked_emails.json", {"ses": [], "contract": []})
-        save_report_files(output, "# メール分析\n\n指定期間の対象メールは0件です。\n")
+        ranked = {"ses": [], "contract": []}
+        if "skill_sheets_dir" in analysis:
+            try:
+                profiles = analysis_pipeline.engineer_matching.load_profiles(analysis["skill_sheets_dir"])
+            except ValueError as error:
+                raise ToolError(str(error)) from None
+            ranked["ses_by_engineer"] = [dict(file=p["file"], sha256=p["sha256"], entries=[]) for p in profiles]
+        write_json(output / "ranked_emails.json", ranked)
+        save_report_files(output, "# メール分析\n\n指定期間の対象メールは0件です。\n\n"
+                          + analysis_pipeline.prioritization.render_report(ranked, config["priority_rules"]))
         metadata["status"] = "complete"
         write_json(output / "metadata.json", metadata)
         record_last_run(state_path, stop)

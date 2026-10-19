@@ -147,7 +147,7 @@ class MailTests(unittest.TestCase):
             if args[1] == "(INTERNALDATE RFC822.SIZE)":
                 return "OK", [f'1 (INTERNALDATE "{dates[args[0]]}" RFC822.SIZE 100)'.encode()]
             self.assertEqual(args[1], "(BODY.PEEK[])")
-            self.assertEqual(args[0], b"2")
+            self.assertIn(args[0], (b"2", b"3"))
             return "OK", [(b"literal", raw), b")"]
 
         client.uid.side_effect = uid
@@ -158,9 +158,45 @@ class MailTests(unittest.TestCase):
 
         config["analysis"]["max_emails"] = 1
         dates[b"3"] = "01-Sep-2026 14:59:59 +0000"
+        client.uid.reset_mock()
         with patch.object(app.imaplib, "IMAP4_SSL", return_value=client), patch.dict(app.os.environ, {"SAKURA_MAIL_PASSWORD": "test-password"}, clear=True):
-            with self.assertRaisesRegex(app.ToolError, "max_emails"):
-                app.fetch_mails(config, start, stop)
+            mails = app.fetch_mails(config, start, stop)
+        self.assertEqual([m["uid"] for m in mails], ["3"])
+        self.assertEqual(client.uid.call_count, 3)  # SEARCH, metadata, body; no older fetch.
+
+    def test_imap_limit_counts_only_in_period_and_sorts_uids_numerically(self):
+        config = app.load_config(Path("config.example.toml"))
+        start, stop = app.period("2026-09-01", "2026-09-01")
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.login.return_value = client.select.return_value = ("OK", [])
+        dates = {b"20": "01-Sep-2026 15:00:00 +0000",  # Outside the exact period.
+                 b"10": "01-Sep-2026 14:00:00 +0000",
+                 b"9": "01-Sep-2026 13:00:00 +0000",
+                 b"2": "31-Aug-2026 15:00:00 +0000"}
+        read_uids, metadata_uids = [], []
+
+        def uid(command, *args):
+            if command == "search":
+                return "OK", [b"9 2 20 10"]
+            if args[1] == "(INTERNALDATE RFC822.SIZE)":
+                metadata_uids.append(args[0])
+                return "OK", [f'1 (INTERNALDATE "{dates[args[0]]}" RFC822.SIZE 100)'.encode()]
+            read_uids.append(args[0])
+            return "OK", [(b"literal", b"Subject: test\r\n\r\nbody")]
+
+        client.uid.side_effect = uid
+        for limit, expected in ((1, [b"10"]), (2, [b"10", b"9"]),
+                                (3, [b"10", b"9", b"2"]), (4, [b"10", b"9", b"2"])):
+            with self.subTest(limit=limit):
+                config["analysis"]["max_emails"] = limit
+                read_uids.clear()
+                metadata_uids.clear()
+                with patch.object(app.imaplib, "IMAP4_SSL", return_value=client):
+                    mails = list(app.iter_fetch_mails(config, start, stop))
+                self.assertEqual([mail["uid"] for mail in mails], [value.decode() for value in expected])
+                self.assertEqual(read_uids, expected)
+                self.assertEqual(metadata_uids, [b"20"] + expected)
 
     def test_imap_connection_failure_has_reason_and_traceback(self):
         config = app.load_config(Path("config.example.toml"))
@@ -495,7 +531,7 @@ class MailTests(unittest.TestCase):
             self.assertEqual(list(app.iter_saved_mails(run_dir / "emails.jsonl")), mails)
             self.assertIsNone(app.read_metadata(run_dir / "metadata.json")["dataset_key"])
 
-    def test_cache_identity_changes_with_mailbox_period_and_body_limit(self):
+    def test_cache_identity_changes_with_mailbox_period_and_limits(self):
         config = app.load_config(Path("config.example.toml"))
         start, stop = app.period("2026-09-01", "2026-09-02")
         key = app.dataset_key(config, start, stop)
@@ -506,8 +542,10 @@ class MailTests(unittest.TestCase):
             config["imap"][field] = original
         other_start, other_stop = app.period("2026-09-01", "2026-09-03")
         self.assertNotEqual(app.dataset_key(config, other_start, other_stop), key)
-        config["analysis"]["max_body_chars"] += 1
-        self.assertNotEqual(app.dataset_key(config, start, stop), key)
+        for field in ("max_body_chars", "max_emails"):
+            config["analysis"][field] += 1
+            self.assertNotEqual(app.dataset_key(config, start, stop), key)
+            config["analysis"][field] -= 1
 
     def test_saved_file_invalid_or_incomplete_is_rejected_before_api(self):
         config = app.load_config(Path("config.example.toml"))

@@ -31,14 +31,14 @@ def card_payload(report_url, ranked=None, rules=None):
     validate_report_url(report_url)
     sections = [f"[メール分析レポートを開く]({report_url})"]
     if ranked is not None:
-        for kind in prioritization.KINDS:
-            lines = [f"{rules[kind]['label']}（上位{rules['top_n']}件まで）"]
-            for entry in ranked[kind]:
+        for label, entries in prioritization.report_sections(ranked, rules):
+            lines = [f"{label}（上位{rules['top_n']}件まで）"]
+            for entry in entries:
                 title = str(entry['latest']['title'] or '不明').replace('\r', ' ').replace('\n', ' ')
                 # Keep project titles literal rather than interpreting Markdown links/emphasis.
                 title = re.sub(r'([\\`*_{}\[\]()#+.!|>~-])', r'\\\1', title)
                 lines.append(f"{entry['rank']}. {title}")
-            if not ranked[kind]:
+            if not entries:
                 lines.append("該当候補はありません。")
             sections.append('\n\n'.join(lines))
     return text_card_payload('\n\n'.join(sections))
