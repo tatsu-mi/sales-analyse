@@ -128,7 +128,14 @@ def report_card_payloads(summary, report, title='メール分析レポート'):
         return len(text_card_payload(prefix + text)) <= MAX_CARD_BYTES
 
     chunks, current = [], ''
+    has_section = False
     for block in [summary + '\n\n', *report_blocks(report)]:
+        if block.startswith('## '):
+            # Each skill sheet (and the contract category) ends its own post.
+            if has_section and current:
+                chunks.append(current)
+                current = ''
+            has_section = True
         if fits(current + block):
             current += block
             continue

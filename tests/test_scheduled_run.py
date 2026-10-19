@@ -63,6 +63,32 @@ class TeamsTests(unittest.TestCase):
         for index, text in enumerate(texts, 1):
             self.assertTrue(text.startswith(f'メール分析レポート（{index}/{len(texts)}）'))
 
+    def test_skill_sheet_top_ten_end_posts_even_with_capacity_remaining(self):
+        sections = [
+            f'## SES / {name}.pdf（上位10件まで）\n' + ''.join(
+                f'### {rank}位: {name}の案件{rank}\n詳細\n' for rank in range(1, 11))
+            for name in ('A', 'B')
+        ]
+        sections += ['## SES / C.pdf（上位10件まで）\n該当候補はありません。\n',
+                     '## 受託（上位10件まで）\n### 1位: 受託案件\n詳細\n']
+        report = '# レポート\n' + ''.join(sections)
+        # The entire report could fit, but each sheet must end its own card.
+        self.assertLess(len(scheduled.text_card_payload('一覧\n\n' + report)),
+                        scheduled.MAX_CARD_BYTES)
+        payloads = scheduled.report_card_payloads('一覧', report)
+        bodies = [text.split('\n\n', 1)[1] for text in self.card_texts(payloads)]
+        self.assertEqual(bodies, ['一覧\n\n# レポート\n' + sections[0], *sections[1:]])
+        self.assertTrue(all(len(payload) <= scheduled.MAX_CARD_BYTES for payload in payloads))
+
+    def test_mail_category_heading_does_not_force_a_new_post(self):
+        report = ('## SES / A.pdf\n### 1位: 案件\n````text\n'
+                  '## メール内の見出し\n```\n本文\n````\n'
+                  '### 2位: 次の案件\n詳細\n')
+        payloads = scheduled.report_card_payloads('一覧', report)
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(self.card_texts(payloads)[0].split('\n\n', 1)[1],
+                         '一覧\n\n' + report)
+
     def test_oversized_project_splits_without_loss_including_long_lines(self):
         for detail in ('長い日本語😀\\"' * 1500, '案件の詳細\n' * 1500):
             with self.subTest(detail=detail[:10]):
@@ -320,7 +346,8 @@ class ScheduledRunTests(unittest.TestCase):
         with patch.object(scheduled, 'send_card') as send:
             scheduled.notify(self.config_path, self.checkpoint_dir, self.publish_dir,
                              'https://github.com/o/r/actions/runs/1/artifacts/2')
-        text = json.loads(send.call_args.args[0])['attachments'][0]['content']['body'][0]['text']
+        text = '\n'.join(json.loads(call.args[0])['attachments'][0]['content']['body'][0]['text']
+                         for call in send.call_args_list)
         self.assertIn('[メール分析レポートを開く]', text)
         self.assertIn('保存済みSES条件（上位10件まで）', text)
         titles = [f'{i}. {kind}案件{i}' for kind in ('ses', 'contract')
