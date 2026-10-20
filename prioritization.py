@@ -105,7 +105,18 @@ def render_report(ranked, rules):
     def text(value):
         return str(value or "不明").replace("\n", " ").replace("\r", " ").replace("|", "\\|")
 
-    lines = ["条件に明確な不適合がある案件、募集終了・期限切れ案件、その他メールは優先対象から除外します。",
+    lines = ["## 案件タイトルサマリー", ""]
+    for label, entries in report_sections(ranked, rules):
+        lines += [f"**{label}（上位{rules['top_n']}件まで）**", ""]
+        for entry in entries:
+            title = str(entry['latest']['title'] or '不明').replace('\r', ' ').replace('\n', ' ')
+            title = re.sub(r'([\\`*_{}\[\]()#+.!|>~-])', r'\\\1', title)
+            lines.append(f"{entry['rank']}. {title}")
+        if not entries:
+            lines.append("該当候補はありません。")
+        lines.append("")
+
+    lines += ["条件に明確な不適合がある案件、募集終了・期限切れ案件、その他メールは優先対象から除外します。",
              "適合条件数、募集中の明記、受信日時の新しさの順で選定します。不明条件は要確認として順位を下げます。",
              "同じメールに複数案件がある場合は、カテゴリごとに最も適合する案件で代表します。", ""]
     if "ses_by_engineer" in ranked:

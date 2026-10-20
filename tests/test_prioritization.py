@@ -56,6 +56,42 @@ class PriorityTests(unittest.TestCase):
         self.assertNotIn("本文の根拠", report)
         self.assertNotIn("| 条件 |", report)
 
+    def test_title_summary_precedes_details_and_lists_each_category_in_rank_order(self):
+        ranked = priority.shortlist([self.candidate(1), self.candidate(2),
+                                     self.candidate(3, 'contract')], self.rules)
+        for kind, entries in ranked.items():
+            for entry in entries:
+                entry['latest']['title'] = f'{kind}案件{entry["rank"]}'
+        report = priority.render_report(ranked, self.rules)
+        summary, details = report.split(f'## {self.rules["ses"]["label"]}（', 1)
+        self.assertTrue(summary.startswith('## 案件タイトルサマリー\n'))
+        self.assertIn('1. ses案件1\n2. ses案件2', summary)
+        self.assertIn('1. contract案件1', summary)
+        self.assertLess(summary.index('1. ses案件1'), summary.index('1. contract案件1'))
+        self.assertNotIn('参照元メール本文', summary)
+        self.assertNotIn('判定:', summary)
+        self.assertIn('### 1位: ses案件1', details)
+        self.assertIn('参照元メール本文', details)
+
+    def test_title_summary_groups_by_skill_sheet_and_keeps_empty_groups(self):
+        entries = priority.shortlist([self.candidate(1)], self.rules)['ses']
+        ranked = {'ses_by_engineer': [{'file': 'A.pdf', 'entries': entries},
+                                     {'file': 'B.pdf', 'entries': []}], 'contract': []}
+        report = priority.render_report(ranked, self.rules)
+        summary = report.split(f'## {self.rules["ses"]["label"]} / ', 1)[0]
+        self.assertIn(f'**{self.rules["ses"]["label"]} / A\\.pdf（上位10件まで）**\n\n1. 開発案件', summary)
+        self.assertIn(f'**{self.rules["ses"]["label"]} / B\\.pdf（上位10件まで）**\n\n該当候補はありません。', summary)
+        self.assertIn(f'**{self.rules["contract"]["label"]}（上位10件まで）**\n\n該当候補はありません。', summary)
+
+    def test_title_summary_displays_markdown_titles_literally_and_handles_missing_title(self):
+        ranked = priority.shortlist([self.candidate(1), self.candidate(2)], self.rules)
+        ranked['ses'][0]['latest']['title'] = '[案件](https://example.com)\r\n*開発*'
+        ranked['ses'][1]['latest']['title'] = ''
+        report = priority.render_report(ranked, self.rules)
+        summary = report.split(f'## {self.rules["ses"]["label"]}（', 1)[0]
+        self.assertIn(r'1. \[案件\]\(https://example\.com\)  \*開発\*', summary)
+        self.assertIn('2. 不明', summary)
+
     def test_best_project_represents_a_mail_in_each_category(self):
         weak = self.candidate(1, states=["unknown"] * len(self.rules['ses']['criteria']))
         strong, contract = self.candidate(1), self.candidate(1, "contract")
