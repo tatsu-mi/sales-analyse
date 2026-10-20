@@ -1,6 +1,7 @@
-"""Read one engineer per PDF and validate evidence-based project matching."""
+"""Read engineers.md sections and validate evidence-based project matching."""
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -9,13 +10,20 @@ SCHEMA = {"type": "OBJECT", "properties": {"records": {
         "id": {"type": "STRING"},
         "state": {"type": "STRING", "enum": ["match", "mismatch", "unknown"]},
         "evidence": {"type": "STRING"},
+        "unassessed_requirements": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "requirements": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+            "criterion": {"type": "INTEGER"},
+            "state": {"type": "STRING", "enum": ["match", "mismatch", "unknown"]},
+            "project_quote": {"type": "STRING"}, "engineer_quote": {"type": "STRING"},
+            "reason": {"type": "STRING"}},
+            "required": ["criterion", "state", "project_quote", "engineer_quote", "reason"]}},
         "commute": {"type": "OBJECT", "properties": {
             "mode": {"type": "STRING", "enum": ["full_remote", "onsite", "hybrid", "unknown"]},
             "nearest_station": {"type": "STRING"}, "workplace": {"type": "STRING"},
             "minutes": {"type": "INTEGER"}, "route": {"type": "STRING"},
             "evidence": {"type": "STRING"}},
             "required": ["mode", "nearest_station", "workplace", "minutes", "route", "evidence"]}},
-        "required": ["id", "state", "evidence", "commute"]}}},
+        "required": ["id", "state", "evidence", "requirements", "unassessed_requirements", "commute"]}}},
     "required": ["records"]}
 
 
@@ -29,45 +37,88 @@ def commute_state(commute):
     return 'match' if commute['minutes'] <= 90 else 'mismatch'
 
 
-def load_profiles(directory):
-    directory = Path(directory)
-    if not directory.is_dir():
-        raise ValueError(f"スキルシートフォルダがありません: {directory}")
-    paths = sorted((p for p in directory.rglob('*') if p.is_file() and p.suffix.lower() == '.pdf'),
-                   key=lambda p: p.relative_to(directory).as_posix())
-    if not paths:
-        return []
+def load_profiles(path):
+    path = Path(path)
     try:
-        from pypdf import PdfReader
-    except ImportError:
-        raise ValueError("PDFの読み取りには python -m pip install -r requirements.txt が必要です。") from None
-    profiles = []
-    for path in paths:
-        name = path.relative_to(directory).as_posix()
-        try:
-            reader = PdfReader(path)
-            pages = [page.extract_text() or '' for page in reader.pages]
-            if not pages or any(not page.strip() for page in pages):
-                raise ValueError("文字を読み取れないページがあります。OCR済みPDFに差し替えてください。")
-        except Exception as error:
-            raise ValueError(f"スキルシートを読めません: {name} ({error})") from None
-        profiles.append({"file": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-                         "text": '\n\n'.join(pages)})
+        text = path.read_text(encoding='utf-8-sig')
+    except (OSError, UnicodeError):
+        raise ValueError(f"エンジニア一覧をUTF-8で読めません: {path}") from None
+    # Each level-two heading is one person. Preamble applies to every person;
+    # other people's sections must never be sent as evidence for this person.
+    headings = list(re.finditer(r'^##[ \t]+(.+)$', text, re.MULTILINE))
+    if not headings:
+        raise ValueError('engineers.md にエンジニアごとの ## 見出しを記載してください。')
+    preamble = text[:headings[0].start()].strip()
+    profiles, names = [], set()
+    for index, heading in enumerate(headings):
+        name = re.sub(r'^\d+[.)．、]\s*', '', heading[1].strip()).split('｜', 1)[0].strip()
+        body = text[heading.end():headings[index + 1].start() if index + 1 < len(headings) else len(text)].strip()
+        if not name or name in names or not body:
+            raise ValueError('エンジニアの名前の重複、または空のプロフィールがあります。')
+        names.add(name)
+        feedback_sections = list(re.finditer(
+            r'^###[ \t]+マッチングフィードバック[ \t]*(?:\n|\Z)(.*?)(?=^###[ \t]+|\Z)', body, re.MULTILINE | re.DOTALL))
+        if len(feedback_sections) > 1:
+            raise ValueError(f'{name} のマッチングフィードバック見出しが重複しています。')
+        feedback = ''
+        if feedback_sections:
+            match = feedback_sections[0]
+            feedback = re.sub(r'<!--.*?-->', '', match[1], flags=re.DOTALL).strip()
+            body = (body[:match.start()] + body[match.end():]).strip()
+        if not body:
+            raise ValueError(f'{name} のプロフィール本文がありません。')
+        section = '\n\n'.join((preamble, '## ' + name, body))
+        identity = json.dumps(dict(text=section, feedback=feedback), ensure_ascii=False, sort_keys=True)
+        profiles.append({'file': name, 'name': name, 'source': path.name,
+                         'sha256': hashlib.sha256(identity.encode('utf-8')).hexdigest(),
+                         'text': section, 'feedback': feedback})
     return profiles
 
 
-def validate(answer, items):
+def contains_quote(quote, source):
+    """Allow line wrapping, but never accept paraphrases as source quotations."""
+    return bool(quote.strip()) and re.sub(r'\s+', '', quote) in re.sub(r'\s+', '', source)
+
+
+def validate(answer, items, profile_text=''):
     try:
         records = json.loads(answer)['records']
         expected = {item['id'] for item in items}
         if not isinstance(records, list) or len(records) != len(expected):
             raise ValueError
         seen = set()
+        by_id = {item['id']: item for item in items}
         for record in records:
             if (record['id'] not in expected or record['id'] in seen
                     or record['state'] not in {'match', 'mismatch', 'unknown'}
                     or not isinstance(record['evidence'], str) or not record['evidence'].strip()):
                 raise ValueError
+            requirements = by_id[record['id']].get('project', {}).get('mandatory_requirements', [])
+            checks = record['requirements']
+            if not isinstance(checks, list) or len(checks) != len(requirements):
+                raise ValueError
+            for index, (check, requirement) in enumerate(zip(checks, requirements), 1):
+                if (type(check['criterion']) is not int or check['criterion'] != index
+                        or check['state'] not in {'match', 'mismatch', 'unknown'}
+                        or not all(isinstance(check[key], str) for key in ('project_quote', 'engineer_quote', 'reason'))
+                        or not check['reason'].strip()):
+                    raise ValueError
+                # An unsupported AI assertion must never become a confirmed match.
+                if (not contains_quote(check['project_quote'], requirement['source_quote'])
+                        or not contains_quote(requirement['source_quote'], check['project_quote'])
+                        or (check['state'] in {'match', 'mismatch'}
+                            and not contains_quote(check['engineer_quote'], profile_text))):
+                    check.update(state='unknown', reason=check['reason'] + '（引用根拠を原文で確認できません）')
+            states = [check['state'] for check in checks]
+            omissions = record['unassessed_requirements']
+            if not isinstance(omissions, list) or not all(isinstance(value, str) and value.strip() for value in omissions):
+                raise ValueError
+            record['state'] = ('mismatch' if 'mismatch' in states else
+                               'match' if states and not omissions and all(state == 'match' for state in states) else 'unknown')
+            if omissions:
+                record['evidence'] += '（未照合の必須条件: ' + ' / '.join(omissions) + '）'
+            if by_id[record['id']].get('source_truncated') and record['state'] == 'match':
+                record.update(state='unknown', evidence=record['evidence'] + '（メール本文省略のため全必須条件を確認できません）')
             seen.add(record['id'])
             commute = record['commute']
             if (not isinstance(commute, dict)
@@ -78,5 +129,5 @@ def validate(answer, items):
                     or not commute['evidence'].strip()):
                 raise ValueError
         return records
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError, AttributeError):
         raise ValueError('エンジニア適合判定の件数・ID・根拠が不正です。') from None

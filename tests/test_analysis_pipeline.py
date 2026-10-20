@@ -24,9 +24,20 @@ def opportunity(budget="70万円/月", deadline="", status="open", project_id="P
     value = dict.fromkeys(pipeline.TEXT_FIELDS, "")
     value.update(title="Python development", project_id=project_id, budget=budget,
                  deadline_iso=deadline, status=status, skills=["Python"], notes=notes, kind="ses",
+                 mandatory_requirements=[dict(requirement='Python実務', category='skill', source_quote='Python')],
                  assessments=[{"criterion": i, "state": "unknown", "evidence": ""}
                               for i in range(1, len(pipeline.prioritization.load_rules('priority_rules.toml')['ses']['criteria']) + 1)])
     return value
+
+
+def checked_record(item, state='match', commute=None):
+    return dict(id=item['id'], state=state, evidence='案件とプロフィールの照合',
+                unassessed_requirements=[],
+                requirements=[dict(criterion=index, state=state, project_quote=req['source_quote'],
+                                   engineer_quote='Python', reason='実務経験を照合')
+                              for index, req in enumerate(item.get('project', {}).get('mandatory_requirements', []), 1)],
+                commute=commute or dict(mode='full_remote', nearest_station='', workplace='', minutes=-1,
+                                       route='', evidence='出社不要'))
 
 
 class PipelineTests(unittest.TestCase):
@@ -38,7 +49,7 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.config = app.load_config(Path("config.example.toml"))
-        self.config["analysis"].pop("skill_sheets_dir", None)
+        self.config["analysis"].pop("engineers_file", None)
         self.config["priority_rules"]["prefilter"]["enabled"] = False
         self.config["analysis"].update(start_date="2026-09-27", end_date="2026-10-03",
                                        chunk_input_tokens=1024, report_input_tokens=1024)
@@ -79,6 +90,10 @@ class PipelineTests(unittest.TestCase):
                 raise app.ToolError("transient failure")
             if self.output_cutoff and len(items) > self.output_cutoff:
                 raise app.OutputLimitError("output truncated")
+            for item in items:
+                for project in self.extracted.get(item['uid'], []):
+                    for req in project.get('mandatory_requirements', []):
+                        req['source_quote'] = item['body']
             return json.dumps({"records": [{"uid": item["uid"], "kind": "ses", "tags": ["Python"],
                                              "market_notes": "Market observations",
                                              "opportunities": self.extracted.get(item["uid"], [])} for item in items]})
@@ -106,8 +121,24 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(app.ToolError):
             list(instance.fit([mail(7, "x" * 3000)], "prompt", instance.settings, 1024))
 
+    def test_requirement_extraction_must_quote_the_original_mail(self):
+        project = opportunity()
+        record = dict(uid='1', kind='ses', tags=[], market_notes='', opportunities=[project])
+        answer = lambda: json.dumps(dict(records=[record]))
+        rules = self.config['priority_rules']
+        self.assertEqual(len(pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)), 1)
+        project['mandatory_requirements'][0]['source_quote'] = 'Java実務必須'
+        with self.assertRaises(pipeline.InvalidExtraction):
+            pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)
+        del project['mandatory_requirements']
+        with self.assertRaises(pipeline.InvalidExtraction):
+            pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)
+
     def test_engineer_shortlists_check_all_candidates_and_keep_contract_independent(self):
         self.extracted = {str(i): [opportunity(project_id=f'P-{i}')] for i in range(15)}
+        for projects in self.extracted.values():
+            for check in projects[0]['assessments']:
+                check.update(state='match', evidence='共通条件を確認')
         contract = opportunity(project_id='C-1')
         contract.update(kind='contract', assessments=[
             {'criterion': i + 1, 'state': 'match', 'evidence': '開発相談'}
@@ -116,7 +147,9 @@ class PipelineTests(unittest.TestCase):
         mails = [mail(i, str(i)) for i in range(16)]
         instance = self.make(mails)
         instance.profiles = [{'file': 'A.pdf', 'sha256': 'a', 'text': 'Python'},
-                             {'file': 'B.pdf', 'sha256': 'b', 'text': 'Java'}]
+                             {'file': 'B.pdf', 'sha256': 'b', 'text': 'Python Java'}]
+        instance.profiles[0]['feedback'] = 'feedback-for-A'
+        instance.profiles[1]['feedback'] = 'feedback-for-B'
         generate = instance.api.generate
         match_calls = []
 
@@ -126,9 +159,10 @@ class PipelineTests(unittest.TestCase):
             items = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
             match_calls.extend(items)
             engineer_a = 'A.pdf' in args[2]
-            return json.dumps({'records': [dict(id=item['id'],
+            self.assertIn('feedback-for-A' if engineer_a else 'feedback-for-B', args[2])
+            self.assertNotIn('feedback-for-B' if engineer_a else 'feedback-for-A', args[2])
+            return json.dumps({'records': [checked_record(item,
                 state=('match' if engineer_a or item['project']['project_id'] == 'P-0' else 'mismatch'),
-                evidence='案件: Python / スキルシート: Python経験',
                 commute=dict(mode='full_remote', nearest_station='', workplace='', minutes=-1,
                              route='', evidence='出社不要のフルリモート')) for item in items]})
 
@@ -141,10 +175,14 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([entry['uid'] for entry in second['entries']], ['0'])
         self.assertEqual([entry['uid'] for entry in ranked['contract']], ['15'])
         self.assertEqual(ranked['ses'], [])
+        audit = json.loads((instance.output / 'engineer_assessments.json').read_text(encoding='utf-8'))
+        self.assertEqual(len(audit), 30)
+        self.assertEqual(len({(entry['engineer'], entry['uid'], entry['project_key']) for entry in audit}), 30)
+        self.assertTrue(any(entry['state'] == 'mismatch' for entry in audit))
         self.assertEqual(second['entries'][0]['source_email']['body'], '0')
         self.assertIn('A\\.pdf', report)
         self.assertIn('B\\.pdf', report)
-        self.assertIn('スキルシートとの照合:', report)
+        self.assertIn('エンジニア情報との照合:', report)
         card = scheduled_run.card_payload('https://example.com/report', ranked, self.config['priority_rules']).decode()
         self.assertIn('A', card)
         self.assertIn('B', card)
@@ -156,6 +194,8 @@ class PipelineTests(unittest.TestCase):
         with patch.object(second_run.api, 'generate', side_effect=matching):
             second_run.run()
         self.assertFalse(match_calls)
+        reused_audit = json.loads((second_run.output / 'engineer_assessments.json').read_text(encoding='utf-8'))
+        self.assertEqual([entry['project_key'] for entry in audit], [entry['project_key'] for entry in reused_audit])
         changed_run = self.make(mails)
         changed_run.profiles = [dict(profiles[0], text='Python 5年', sha256='new'), profiles[1]]
         with patch.object(changed_run.api, 'generate', side_effect=matching):
@@ -170,7 +210,7 @@ class PipelineTests(unittest.TestCase):
             batch = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
             if len(batch) > 1:
                 raise app.OutputLimitError('truncated')
-            return json.dumps({'records': [dict(id=batch[0]['id'], state='unknown', evidence='要確認',
+            return json.dumps({'records': [checked_record(batch[0], state='unknown',
                 commute=dict(mode='unknown', nearest_station='', workplace='', minutes=-1,
                              route='', evidence='勤務地不明'))]})
 
@@ -187,17 +227,20 @@ class PipelineTests(unittest.TestCase):
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         self.assertEqual(ranked['ses_by_engineer'], [])
         self.assertEqual(ranked['ses'], [])
-        self.assertIn('PDF未登録', report)
+        self.assertIn('エンジニア未登録', report)
 
     def test_commute_is_required_per_engineer_and_contract_is_independent(self):
         self.extracted = {str(i): [opportunity(project_id=f'P-{i}')] for i in range(6)}
+        for projects in self.extracted.values():
+            for check in projects[0]['assessments']:
+                check.update(state='match', evidence='共通条件を確認')
         contract = opportunity(project_id='C-1')
         contract.update(kind='contract', assessments=[dict(criterion=i + 1, state='match', evidence='開発相談')
                         for i in range(len(self.config['priority_rules']['contract']['criteria']))])
         self.extracted['6'] = [contract]
         instance = self.make([mail(i, str(i)) for i in range(7)])
-        instance.profiles = [dict(file='A.pdf', sha256='a', text='最寄り駅: 仙台駅'),
-                             dict(file='B.pdf', sha256='b', text='最寄り駅: 東京駅')]
+        instance.profiles = [dict(file='A.pdf', sha256='a', text='Python 最寄り駅: 仙台駅'),
+                             dict(file='B.pdf', sha256='b', text='Python 最寄り駅: 東京駅')]
         generate = instance.api.generate
 
         def matching(*args, **kwargs):
@@ -221,7 +264,7 @@ class PipelineTests(unittest.TestCase):
                     commute['nearest_station'] = ''
                 elif number == 5:
                     commute.update(mode='hybrid', minutes=91)
-                records.append(dict(id=item['id'], state='match', evidence='スキル適合', commute=commute))
+                records.append(checked_record(item, commute=commute))
             return json.dumps(dict(records=records))
 
         with patch.object(instance.api, 'generate', side_effect=matching):
@@ -230,6 +273,7 @@ class PipelineTests(unittest.TestCase):
         first, second = ranked['ses_by_engineer']
         self.assertEqual({e['uid'] for e in first['entries']}, {'0', '2'})
         self.assertEqual([e['uid'] for e in second['entries']], ['2'])
+        self.assertEqual({e['uid'] for e in first['pending_entries']}, {'3', '4'})
         self.assertEqual([e['uid'] for e in ranked['contract']], ['6'])
         self.assertIn('片道90分', report)
         self.assertIn('フルリモート（出社不要）', report)
@@ -251,7 +295,7 @@ class PipelineTests(unittest.TestCase):
                 return generate(*args, **kwargs)
             batch = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
             matched_projects.extend(item['project']['project_id'] for item in batch)
-            return json.dumps({'records': [dict(id=item['id'], state='match', evidence='スキル適合',
+            return json.dumps({'records': [checked_record(item,
                 commute=dict(mode='full_remote', nearest_station='', workplace='', minutes=-1,
                              route='', evidence='出社不要')) for item in batch]})
 
@@ -260,8 +304,9 @@ class PipelineTests(unittest.TestCase):
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         self.assertEqual(matched_projects, ['P-OK', 'P-OK'])
         for group in ranked['ses_by_engineer']:
-            self.assertEqual([e['uid'] for e in group['entries']], ['1'])
-            self.assertEqual(group['entries'][0]['verification'], '要確認')
+            self.assertEqual(group['entries'], [])
+            self.assertEqual([e['uid'] for e in group['pending_entries']], ['1'])
+            self.assertEqual(group['pending_entries'][0]['verification'], '要確認')
         self.assertIn('全エンジニアに共通で適用', report)
 
     def test_exact_duplicate_preserves_latest_uid_and_all_sources(self):

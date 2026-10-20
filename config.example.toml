@@ -26,8 +26,8 @@ requests_per_minute = 5
 input_tokens_per_minute = 150000
 
 [analysis]
-# PDF 1ファイルをエンジニア1名として扱います。相対パスはこの設定ファイルの場所が基準。
-skill_sheets_dir = "スキルシート"
+# エンジニア一覧のMarkdownファイル。相対パスはこの設定ファイルの場所が基準。
+engineers_file = "engineers.md"
 # 期間指定なしは前回正常完了の実施時刻以降。記録のない初回のみ直近24時間。
 lookback_hours = 24
 # 判定条件は別ファイルで管理。相対パスはこの設定ファイルの場所が基準。
@@ -50,5 +50,5 @@ summary_output_tokens = 6000
 # 案件抽出と最終レポートの分析観点。
 instructions = """
 メールをSES要員募集・受託システム開発・その他に分類し、priority_rules_fileの条件で判定します。
-その他は優先対象から除外します。SESはスキルシートPDFごと、受託は全体で上位10通までをメール単位で抽出します。
+その他は優先対象から除外します。SESはengineers.mdのエンジニアごとに適合確認済みと要確認を分け、受託は全体で上位10通までをメール単位で抽出します。
 """

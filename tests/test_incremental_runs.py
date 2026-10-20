@@ -27,9 +27,9 @@ class IncrementalRunTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.config = app.load_config(Path("config.example.toml"))
-        skill_sheets = self.root / 'skills'
-        skill_sheets.mkdir()
-        self.config["analysis"]["skill_sheets_dir"] = str(skill_sheets)
+        engineers = self.root / 'engineers.md'
+        engineers.write_text('## A\n\nPython', encoding='utf-8')
+        self.config["analysis"]["engineers_file"] = str(engineers)
         self.config["analysis"]["output_dir"] = str(self.root)
         self.config["logging"]["enabled"] = False
         self.args = SimpleNamespace(config="config.example.toml", start=None, end=None,

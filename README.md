@@ -68,9 +68,34 @@ TEAMS_WEBHOOK_URL="Teams WorkflowsのURL"
 
 `.env` は指定した `config.toml` と同じフォルダに配置してください。GHAでは `.env` の作成は不要です。シークレットをTOMLに記載したり、Gitにコミットしたりしないでください。
 
-## スキルシートの配置
+## エンジニア一覧の設定
 
-`スキルシート/` にエンジニアごとのPDFを置いてください。配置先を変更する場合は、`config.toml` の `analysis.skill_sheets_dir` に設定してください。相対パスは設定ファイルの場所を基準に指定します。
+`engineers.md` を編集して、エンジニアごとに `## 名前` の見出しとプロフィールを記載してください。共通注意事項は最初のエンジニアの見出しより前に記載します。
 
-画像のみのページはOCR済みPDFに差し替えてください。
-GitHub Actionsで実行する場合も、実行環境の同じ設定先にPDFを配置する必要があります。
+ファイルを変更する場合は、`config.toml` の `analysis.engineers_file` に設定してください。相対パスは設定ファイルの場所が基準です。GitHub Actionsでも同じ設定先にUTF-8のファイルを配置してください。
+
+各人の `### マッチングフィードバック` 欄に、案件名・判定（適合／不適合／要確認）・理由を追記できます。以下は記入例です。実際に確認した内容に置き換えてください。
+
+```markdown
+### マッチングフィードバック
+
+- 案件名：○○システム開発（案件IDや受信日も分かれば記載）
+  - 判定：不適合
+  - 理由：必須のバックエンド実務3年以上を確認できない。研修期間を実務に含めない。
+```
+
+## 判定結果の評価
+
+実行フォルダの `engineer_assessments.json` を確認し、人が確認した正解を `matching_labels.json` に記載してください。対象レコードの `engineer`・`uid`・`project_key` をそのままコピーし、`expected` に `match`（適合）・`mismatch`（不適合）・`unknown`（情報不足）のいずれかを指定します。
+
+```json
+[
+  {"engineer": "EK", "uid": "対象UID", "project_key": "対象レコードのキー", "expected": "mismatch"}
+]
+```
+
+```powershell
+python evaluate_matching.py output/対象実行フォルダ/engineer_assessments.json matching_labels.json
+```
+
+正解を記載した案件に対する集計と判定の相違が表示されます。評価結果を比較するときは、同じ案件・エンジニアの組み合わせに正解を付けてください。

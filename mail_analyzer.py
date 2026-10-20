@@ -118,7 +118,7 @@ def load_config(path, *, load_environment=True):
                    "retry_max_wait_seconds", "requests_per_minute", "input_tokens_per_minute"},
         "analysis": {"lookback_hours", "priority_rules_file", "start_date", "end_date", "max_emails",
                      "max_body_chars", "max_message_bytes", "output_dir", "chunk_input_tokens",
-                     "report_input_tokens", "summary_output_tokens", "instructions", "skill_sheets_dir"},
+                     "report_input_tokens", "summary_output_tokens", "instructions", "engineers_file"},
         "teams": {"timeout_seconds"},
     }
     for section, keys in (("imap", ("host", "username", "password")), ("gemini", ("api_key",)),
@@ -158,12 +158,12 @@ def load_config(path, *, load_environment=True):
     teams = config.setdefault("teams", {})
     teams["timeout_seconds"] = positive(teams, "timeout_seconds", 60)
     analysis = config["analysis"]
-    if "skill_sheets_dir" in analysis:
-        directory = analysis["skill_sheets_dir"]
+    if "engineers_file" in analysis:
+        directory = analysis["engineers_file"]
         if not isinstance(directory, str) or not directory.strip():
-            raise ToolError("analysis.skill_sheets_dir にスキルシートフォルダを指定してください。")
+            raise ToolError("analysis.engineers_file にエンジニア一覧ファイルを指定してください。")
         directory = Path(directory)
-        analysis["skill_sheets_dir"] = str(directory if directory.is_absolute() else path.resolve().parent / directory)
+        analysis["engineers_file"] = str(directory if directory.is_absolute() else path.resolve().parent / directory)
     analysis["lookback_hours"] = positive(analysis, "lookback_hours", 24)
     rules_path = analysis.get("priority_rules_file", "priority_rules.toml")
     if not isinstance(rules_path, str) or not rules_path.strip():
@@ -853,12 +853,14 @@ def run(args):
     if not count:
         write_json(output / "priority_rules.json", config["priority_rules"])
         ranked = {"ses": [], "contract": []}
-        if "skill_sheets_dir" in analysis:
+        if "engineers_file" in analysis:
             try:
-                profiles = analysis_pipeline.engineer_matching.load_profiles(analysis["skill_sheets_dir"])
+                profiles = analysis_pipeline.engineer_matching.load_profiles(analysis["engineers_file"])
             except ValueError as error:
                 raise ToolError(str(error)) from None
-            ranked["ses_by_engineer"] = [dict(file=p["file"], sha256=p["sha256"], entries=[]) for p in profiles]
+            ranked["ses_by_engineer"] = [dict(file=p["file"], name=p['name'], sha256=p["sha256"],
+                                             entries=[], pending_entries=[]) for p in profiles]
+            write_json(output / 'engineer_assessments.json', [])
         write_json(output / "ranked_emails.json", ranked)
         save_report_files(output, "# メール分析\n\n指定期間の対象メールは0件です。\n\n"
                           + analysis_pipeline.prioritization.render_report(ranked, config["priority_rules"]))

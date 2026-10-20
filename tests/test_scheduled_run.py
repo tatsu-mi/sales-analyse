@@ -171,7 +171,7 @@ class ScheduledRunTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        (self.root / 'スキルシート').mkdir()
+        (self.root / 'engineers.md').write_text('## A\n\nPython', encoding='utf-8')
         self.config_path = self.root / 'config.toml'
         config = Path('config.toml').read_text(encoding='utf-8')
         rules = (Path.cwd() / 'priority_rules.toml').as_posix()
@@ -366,7 +366,7 @@ class ScheduledRunTests(unittest.TestCase):
         self.assertEqual(checkpoint['mailbox'], self.state.stem)
         self.assertEqual(json.loads(self.state.read_text())['last_run_at'], checkpoint['last_run_at'])
         self.assertEqual(sorted(p.name for p in self.publish_dir.iterdir()),
-                         ['priority_rules.json', 'ranked_emails.json', 'report.md'])
+                         ['engineer_assessments.json', 'priority_rules.json', 'ranked_emails.json', 'report.md'])
         self.seed()
         with patch.object(app, 'iter_fetch_mails', return_value=iter([])) as fetch, \
                 patch.object(scheduled, 'post_report'):

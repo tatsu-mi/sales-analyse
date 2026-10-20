@@ -60,11 +60,11 @@ class ConfigurationTests(unittest.TestCase):
         self.path.write_text(self.source.replace('max_emails = 2000\n', ''), encoding='utf-8')
         self.assertEqual(self.load()['analysis']['max_emails'], 2000)
 
-    def test_skill_sheet_directory_is_resolved_relative_to_config(self):
-        self.assertEqual(Path(self.load()['analysis']['skill_sheets_dir']), self.root / 'スキルシート')
+    def test_engineer_file_is_resolved_relative_to_config(self):
+        self.assertEqual(Path(self.load()['analysis']['engineers_file']), self.root / 'engineers.md')
         for invalid in ('""', 'false', '123'):
-            self.path.write_text(self.source.replace('skill_sheets_dir = "スキルシート"',
-                                                   f'skill_sheets_dir = {invalid}'), encoding='utf-8')
+            self.path.write_text(self.source.replace('engineers_file = "engineers.md"',
+                                                   f'engineers_file = {invalid}'), encoding='utf-8')
             with self.subTest(invalid=invalid), self.assertRaises(app.ToolError):
                 self.load()
 

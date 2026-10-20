@@ -1,1 +1,1 @@
-pypdf>=6.0,<7
+# Runtime and tests use the Python standard library.
