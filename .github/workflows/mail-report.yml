@@ -142,7 +142,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s .gha-report/report.md
-          filename="report-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.md"
+          filename="report-$(TZ=Asia/Tokyo date +%Y%m%d%H%M).md"
           report_url=$(az rest \
             --method PUT \
             --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/${filename}:/content" \
