@@ -142,10 +142,3 @@ python evaluate_matching.py output/対象実行フォルダ/engineer_assessments
 ```
 
 正解を記載した案件に対する集計と判定の相違が表示されます。評価結果を比較するときは、同じ案件・エンジニアの組み合わせに正解を付けてください。
-
-## リポジトリ公開前の作業
-
-- `engineers.md` と `スキルシート/` が全ブランチ・タグの履歴から削除済みであることを確認してください。履歴を書き換えた後は共同作業者も再cloneしてください。
-- 過去のActionsの `mail-report` Artifactと、個人名・案件情報を含むログを削除してください。今後のGHAではレポートのArtifact保存を行わず、分析ログも公開しません。レポートはSharePointで確認してください。
-- `.env`、実メール、出力レポート、スキルシートをコミットしないでください。`output/`、`.gha-report/`、`.gha-state/` はGit管理の対象外です。
-- 判定条件はSharePointの `priority_rules.md` で管理し、旧 `priority_rules.toml` がGit履歴に残っていないことを確認してください。`config.toml`、公開用サンプル、テストやコメントにも社内条件・実データを書かないでください。
