@@ -372,6 +372,46 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(self.calls)
         self.assertEqual(second.metadata["extracted_unique_count"], 3)
 
+    def test_bad_single_mail_is_skipped_after_splitting_and_retried_on_restart(self):
+        mails = [mail(1, 'first'), mail(2, 'bad'), mail(3, 'last')]
+        original_generate = self.api.generate
+
+        def generate(*args, **kwargs):
+            answer = original_generate(*args, **kwargs)
+            if any(item['uid'] == '2' for item in self.calls[-1]):
+                return '{invalid json'
+            return answer
+
+        instance = self.make(mails)
+        with patch.object(self.api, 'generate', side_effect=generate):
+            summary = instance.run()
+        self.assertEqual(instance.metadata['extracted_unique_count'], 2)
+        self.assertEqual(instance.metadata['skipped_unique_count'], 1)
+        self.assertEqual(instance.metadata['skipped_emails'], [{'uid': '2', 'reason': 'invalid_extraction'}])
+        rows = [json.loads(line) for line in (instance.output / 'extracted_emails.jsonl').read_text(encoding='utf-8').splitlines()]
+        self.assertEqual([row['uid'] for row in rows], ['1', '3'])
+        stats = json.loads((instance.output / 'statistics.json').read_text(encoding='utf-8'))
+        self.assertEqual(stats['skipped_emails'], instance.metadata['skipped_emails'])
+        self.assertTrue(any(path.read_text(encoding='utf-8') == '{invalid json'
+                            for path in instance.work.glob('*.result.txt')))
+        app.write_report(instance.output, instance.metadata, summary)
+        self.assertIn('抽出失敗によるスキップ: 1 件', (instance.output / 'report.md').read_text(encoding='utf-8'))
+
+        self.calls.clear()
+        second = self.make(mails)
+        second.run()
+        self.assertEqual([item['uid'] for group in self.calls for item in group], ['2'])
+        self.assertEqual(second.metadata['extracted_unique_count'], 3)
+        self.assertEqual(second.metadata['skipped_unique_count'], 0)
+
+    def test_single_mail_output_limit_skips_without_inventing_results(self):
+        instance = self.make([mail(1)])
+        with patch.object(self.api, 'generate', side_effect=app.OutputLimitError('output truncated')):
+            instance.run()
+        self.assertEqual(instance.metadata['extracted_unique_count'], 0)
+        self.assertEqual(instance.metadata['skipped_emails'], [{'uid': '1', 'reason': 'output_limit'}])
+        self.assertEqual((instance.output / 'extracted_emails.jsonl').read_text(), '')
+
     def test_aggregation_keeps_condition_history_and_deterministic_counts(self):
         self.extracted = {"1": [opportunity("60万円/月")], "2": [opportunity("70万円/月")],
                           "3": [opportunity(deadline="2026-10-01", project_id="P-2")],

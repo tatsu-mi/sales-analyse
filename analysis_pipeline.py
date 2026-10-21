@@ -190,6 +190,7 @@ class Pipeline:
         self.work = output / "analysis"
         self.work.mkdir()
         self.metadata.update(pipeline_version=VERSION, extraction_chunks=0, extracted_unique_count=0,
+                             skipped_unique_count=0, skipped_emails=[],
                              reused_steps=0, model_input_limit=limits["inputTokenLimit"],
                              effective_chunk_input_tokens=self.extract_limit,
                              effective_report_input_tokens=self.report_limit)
@@ -200,10 +201,11 @@ class Pipeline:
         self.api.write_json(self.output / "metadata.json", self.metadata)
 
     def mail_progress(self, detail):
-        done = self.metadata["extracted_unique_count"]
+        skipped = self.metadata["skipped_unique_count"]
+        done = self.metadata["extracted_unique_count"] + skipped
         total = self.metadata.get("analysis_target_count", self.metadata["unique_email_count"])
         percent = 100 * done / total if total else 100
-        print(f"メール分析：{done:,} / {total:,}通完了（{percent:.1f}%）｜{detail}", flush=True)
+        print(f"メール分析：{done:,} / {total:,}通完了（{percent:.1f}%・スキップ{skipped:,}通）｜{detail}", flush=True)
 
     def request_progress(self, items, schema, cached=False):
         if schema == engineer_matching.SCHEMA:
@@ -285,10 +287,10 @@ class Pipeline:
         self.save_progress()
         answer = self.api.generate(settings, self.key, prompt, file_data=uploaded, response_schema=schema,
                                    before_request=lambda: self.limiter.reserve(actual))
+        (self.work / f"{label}_{key[:12]}.result.txt").write_text(answer, encoding="utf-8")
         if validator:
             validator(answer, items)
         atomic_json(cache_path, {"key": key, "answer": answer})
-        (self.work / f"{label}_{key[:12]}.result.txt").write_text(answer, encoding="utf-8")
         self.save_progress()
         return answer
 
@@ -461,9 +463,16 @@ class Pipeline:
             self.save_progress()
             yield from records
             self.mail_progress(f"今回の{len(items):,}通の分析結果を保存しました")
-        except (self.api.OutputLimitError, InvalidExtraction):
+        except (self.api.OutputLimitError, InvalidExtraction) as error:
             if len(items) == 1:
-                raise self.api.ToolError(f"UID {items[0]['uid']} の構造化抽出を完了できません。原文・成功済み結果は保存済みです。") from None
+                uid = items[0]['uid']
+                reason = ("output_limit" if isinstance(error, self.api.OutputLimitError)
+                          else "invalid_extraction")
+                self.metadata["skipped_emails"].append({"uid": uid, "reason": reason})
+                self.metadata["skipped_unique_count"] += 1
+                self.save_progress()
+                self.mail_progress(f"UID {uid} の構造化抽出をスキップ（{reason}）。原文は保存済みです。残りを続行します")
+                return
             if not previously_split:
                 self.mail_progress(f"今回の{len(items):,}通をさらに分けて分析し直します")
             atomic_json(split_path, {"split": True})
@@ -529,6 +538,9 @@ class Pipeline:
         stats = {"raw_emails": self.metadata["count"], "unique_emails": self.metadata["unique_email_count"],
                  **{key: self.metadata[key] for key in ("mechanical_excluded_count", "ai_excluded_count", "limit_excluded_count", "analysis_target_count")},
                  "exact_duplicate_emails": self.metadata["duplicate_email_count"],
+                 "extracted_unique_count": self.metadata["extracted_unique_count"],
+                 "skipped_unique_count": self.metadata["skipped_unique_count"],
+                 "skipped_emails": self.metadata["skipped_emails"],
                  "raw_emails_by_kind": dict(raw_kinds), "unique_emails_by_kind": dict(unique_kinds),
                  "opportunity_groups": candidate_count + closed_count, "potential_candidates": candidate_count,
                  "closed_or_expired_at_period_end": closed_count,
@@ -671,7 +683,8 @@ class Pipeline:
             self.prepare(connection)
             self.screen_titles(connection)
             extracted = self.extract(connection)
-            if self.metadata["extracted_unique_count"] != self.metadata["analysis_target_count"]:
+            if (self.metadata["extracted_unique_count"] + self.metadata["skipped_unique_count"]
+                    != self.metadata["analysis_target_count"]):
                 raise self.api.ToolError("選別後の全メールの構造化抽出を完了できませんでした。")
             print("メール分析が完了しました。案件情報を集計し、レポート作成に進みます。", flush=True)
             opportunity_path, stats = self.aggregate(connection, extracted)

@@ -233,6 +233,9 @@ def prepare(config_path, checkpoint_dir, publish_dir):
     publish_dir.mkdir(parents=True, exist_ok=True)
     for name in ("report.md", "ranked_emails.json", "priority_rules.json"):
         shutil.copy2(output / name, publish_dir / name)
+    statistics = output / 'statistics.json'
+    if statistics.is_file():
+        shutil.copy2(statistics, publish_dir / statistics.name)
     assessments = output / 'engineer_assessments.json'
     if assessments.is_file():
         shutil.copy2(assessments, publish_dir / assessments.name)
