@@ -17,11 +17,11 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
 
-      - name: 保存先ライブラリの一覧を取得
+      - name: 保存先フォルダのIDを取得
         run: |
           az rest \
             --method GET \
-            --url "https://graph.microsoft.com/v1.0/sites/tatsumielectronics.sharepoint.com,c9ff927a-a720-4d81-bb50-50f6bdac3be2,1786303b-fd84-4b83-a122-bdb481d41a21/drives" \
+            --url "https://graph.microsoft.com/v1.0/drives/b!epL_ySCngU27UFD2vaw74jswhheE_YNLoSK9tIHUGiGDak_6XwWDT4nqnd41LPxL/root:/SS%E9%83%A8/%E3%83%90%E3%83%83%E3%82%AF%E3%82%AA%E3%83%95%E3%82%A3%E3%82%B9%E9%96%A2%E9%80%A3/%E8%87%AA%E5%8B%95%E5%8C%96/%E5%96%B6%E6%A5%AD%E3%83%A1%E3%83%BC%E3%83%AB%E5%88%86%E6%9E%90" \
             --resource "https://graph.microsoft.com/" \
-            --query 'value[].{name:name,id:id,webUrl:webUrl}' \
+            --query '{id:id,name:name,webUrl:webUrl}' \
             --output json
