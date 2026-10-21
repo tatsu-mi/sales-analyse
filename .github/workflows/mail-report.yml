@@ -54,12 +54,6 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Run tests without external services
-        run: python -m unittest discover -s tests -q
-
-      - name: Validate TOML without credentials
-        run: python validate_config.py --structure-only
-
       - name: Validate SharePoint settings
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

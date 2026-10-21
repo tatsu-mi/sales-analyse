@@ -1,0 +1,42 @@
+name: Validate TOML configuration
+
+on:
+  push:
+    paths:
+      - 'requirements.txt'
+      - '**/*.toml'
+      - 'priority_rules.example.md'
+      - '*.py'
+      - 'tests/**'
+      - '.github/workflows/validate-config.yml'
+  pull_request:
+    paths:
+      - 'requirements.txt'
+      - '**/*.toml'
+      - 'priority_rules.example.md'
+      - '*.py'
+      - 'tests/**'
+      - '.github/workflows/validate-config.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Validate TOML without credentials or network calls
+        run: python validate_config.py --structure-only
+      - name: Run offline tests
+        run: python -m unittest discover -s tests -q
