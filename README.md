@@ -52,9 +52,9 @@ Teamsのテスト投稿後は投稿先チャネルで表示を確認してくだ
 1. Entraのアプリ登録に、Microsoft Graphのアプリケーション権限 `Sites.Selected` を追加し、管理者同意を付与します。
 2. 管理者に、保存先SharePointサイトへのアプリの `write` 許可を依頼します。
 3. アプリの「証明書とシークレット → フェデレーション資格情報」で、対象GitHubリポジトリのデフォルトブランチを登録します。GitHub Environmentを使用する場合は、ブランチではなくそのEnvironmentに合わせます。
-4. Repository secretsに `AZURE_CLIENT_ID` と `AZURE_TENANT_ID`、Repository variablesに `SHAREPOINT_DRIVE_ID`（ライブラリID）と `SHAREPOINT_FOLDER_ID`（保存先フォルダID）を登録します。
-5. レポートを読む人に保存先フォルダの閲覧権限を設定します。
-6. 同じ保存先フォルダの直下に、UTF-8の `engineers.md` と `priority_rules.md` をアップロードします。
+4. Repository secretsに `AZURE_CLIENT_ID` と `AZURE_TENANT_ID`、Repository variablesに `SHAREPOINT_DRIVE_ID`（ライブラリID）と `SHAREPOINT_FOLDER_ID`（対象フォルダID）を登録します。
+5. レポートは対象フォルダ内の `reports/` に保存します。フォルダがなければ実行時に作成します。レポートを読む人に `reports/` の閲覧権限を設定してください。
+6. 対象フォルダの直下に、UTF-8の `engineers.md` と `priority_rules.md` をアップロードします。
 
 設定済みのIDがSecrets側にある場合は、Variables側に登録してください。クライアントシークレットとAzureサブスクリプションIDの登録は不要です。
 
@@ -86,7 +86,7 @@ TEAMS_WEBHOOK_URL="Teams WorkflowsのURL"
 
 ## エンジニア一覧の設定
 
-SharePointのレポート保存先フォルダにある `engineers.md` を編集して、エンジニアごとに `## 名前` の見出しとプロフィールを記載してください。共通注意事項は最初のエンジニアの見出しより前に記載します。GHAでは実行のたびにこのファイルを取得します。取得や形式の検証に失敗した場合は分析を開始しません。
+SharePointの対象フォルダ直下にある `engineers.md` を編集して、エンジニアごとに `## 名前` の見出しとプロフィールを記載してください。共通注意事項は最初のエンジニアの見出しより前に記載します。GHAでは実行のたびにこのファイルを取得します。取得や形式の検証に失敗した場合は分析を開始しません。
 
 ローカル実行時はSharePointからダウンロードし、`config.toml` の `analysis.engineers_file` の場所（初期値は `engineers.md`）に配置してください。相対パスは設定ファイルの場所が基準です。GHAでもダウンロードしたファイルをこの設定先に配置します。`engineers.md` と `スキルシート/` はGit管理の対象外です。実データを別名でコミットしないでください。
 
@@ -102,7 +102,7 @@ SharePointのレポート保存先フォルダにある `engineers.md` を編集
 
 ## 判定条件の設定
 
-SharePointのレポート保存先フォルダに `priority_rules.md` を配置してください。GHAでは毎回取得し、形式を検証してから分析を開始します。取得や検証に失敗すると停止します。
+SharePointの対象フォルダ直下に `priority_rules.md` を配置してください。GHAでは毎回取得し、形式を検証してから分析を開始します。取得や検証に失敗すると停止します。
 
 新しく作る場合は `priority_rules.example.md` をコピーし、各見出しの条件を編集してください。`## SES: 表示名` と `## 受託: 表示名` の条件は、1項目ずつ `- ` で始めます。件名パターンはバッククォートで囲んだ正規表現、機械選別・AI選別は `有効` または `無効` で指定します。表示件数は1〜10、一括処理件数は1〜100です。サンプルの見出し名は維持してください。
 

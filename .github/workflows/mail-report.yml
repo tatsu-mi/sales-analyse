@@ -183,10 +183,11 @@ jobs:
         run: |
           set -euo pipefail
           test -s .gha-report/report.md
+          reports_folder_id=$(python sharepoint_reports.py)
           filename="report-$(TZ=Asia/Tokyo date +%Y%m%d%H%M).md"
           report_url=$(az rest \
             --method PUT \
-            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/${filename}:/content" \
+            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${reports_folder_id}:/${filename}:/content" \
             --resource "https://graph.microsoft.com/" \
             --headers "Content-Type=text/plain; charset=utf-8" \
             --body "@.gha-report/report.md" \

@@ -62,6 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          reports_folder_id=$(python sharepoint_reports.py)
           filename="sharepoint-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.md"
           printf '# SharePoint・Teams連携テスト\n\nSharePointへのアップロードとTeamsへのリンク投稿の接続確認です。\n\n実行ID: %s / 試行: %s\n' \
             "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
@@ -69,7 +70,7 @@ jobs:
 
           report_url=$(az rest \
             --method PUT \
-            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/${filename}:/content" \
+            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${reports_folder_id}:/${filename}:/content" \
             --resource "https://graph.microsoft.com/" \
             --headers "Content-Type=text/plain; charset=utf-8" \
             --body "@$RUNNER_TEMP/sharepoint-test-report.md" \
