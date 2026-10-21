@@ -591,7 +591,8 @@ class Pipeline:
             return validate(answer, items)
         except (self.api.OutputLimitError, InvalidExtraction) as error:
             if len(items) == 1:
-                raise self.api.ToolError(f"エンジニア適合判定に失敗しました: {error}") from None
+                print(f"警告: エンジニア適合判定を保留して続行します（{label}, 案件ID={items[0]['id']}）: {error}", flush=True)
+                return [engineer_matching.pending_record(items[0], error)]
             middle = len(items) // 2
             result = []
             for half in (items[:middle], items[middle:]):

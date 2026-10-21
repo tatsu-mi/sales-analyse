@@ -229,6 +229,66 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(ranked['ses'], [])
         self.assertIn('エンジニア未登録', report)
 
+    def test_invalid_engineer_response_keeps_project_pending_and_continues_report(self):
+        self.extracted = {str(i): [opportunity(project_id=f'P-{i}')] for i in range(2)}
+        for projects in self.extracted.values():
+            for check in projects[0]['assessments']:
+                check.update(state='match', evidence='共通条件を確認')
+        contract = opportunity(project_id='C-1')
+        contract.update(kind='contract', assessments=[
+            dict(criterion=i + 1, state='match', evidence='開発相談')
+            for i in range(len(self.config['priority_rules']['contract']['criteria']))])
+        self.extracted['2'] = [contract]
+        instance = self.make([mail(i, f'Python {i}') for i in range(3)])
+        instance.profiles = [dict(file=name, sha256=name, text='Python') for name in ('A', 'B')]
+        generate = instance.api.generate
+
+        def matching(*args, **kwargs):
+            if kwargs.get('response_schema') != engineer_matching.SCHEMA:
+                return generate(*args, **kwargs)
+            batch = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
+            records = [checked_record(item) for item in batch]
+            if '"file":"A"' in args[2]:
+                for record, item in zip(records, batch):
+                    if item['project']['project_id'] == 'P-0':
+                        record['evidence'] = ''
+            return json.dumps(dict(records=records))
+
+        with patch.object(instance.api, 'generate', side_effect=matching):
+            report = instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        first, second = ranked['ses_by_engineer']
+        self.assertEqual([entry['uid'] for entry in first['entries']], ['1'])
+        self.assertEqual([entry['uid'] for entry in first['pending_entries']], ['0'])
+        pending = first['pending_entries'][0]['engineer_match']
+        self.assertEqual(pending['state'], 'unknown')
+        self.assertEqual(pending['requirements'][0]['state'], 'unknown')
+        self.assertEqual(pending['commute']['mode'], 'unknown')
+        self.assertEqual({entry['uid'] for entry in second['entries']}, {'0', '1'})
+        self.assertEqual([entry['uid'] for entry in ranked['contract']], ['2'])
+        self.assertIn('AIの適合判定を確認できないため判定保留', report)
+        audit = json.loads((instance.output / 'engineer_assessments.json').read_text(encoding='utf-8'))
+        self.assertEqual(len(audit), 4)
+        self.assertEqual(next(entry for entry in audit if entry['engineer'] == 'A' and entry['uid'] == '0')['state'], 'unknown')
+
+    def test_unusable_single_engineer_response_is_pending_and_not_cached(self):
+        instance = self.make([mail(1)])
+        items = [dict(id='0', project=opportunity())]
+        batch, text, tokens = next(instance.groups(
+            items, 'prompt', instance.settings, instance.report_limit, engineer_matching.SCHEMA))
+        failures = ['not JSON', '{"records":[]}', app.OutputLimitError('truncated')]
+        for failure in failures:
+            with self.subTest(failure=failure):
+                with patch.object(instance.api, 'generate', side_effect=[failure]):
+                    records = instance.match_part(batch, text, tokens, 'prompt', 'test', 'Python')
+                self.assertEqual(records[0]['state'], 'unknown')
+                engineer_matching.validate(json.dumps(dict(records=records)), items, 'Python')
+        with patch.object(instance.api, 'generate', return_value=json.dumps(
+                dict(records=[checked_record(items[0])]))) as generate:
+            records = instance.match_part(batch, text, tokens, 'prompt', 'test', 'Python')
+        generate.assert_called_once()
+        self.assertEqual(records[0]['state'], 'match')
+
     def test_commute_is_required_per_engineer_and_contract_is_independent(self):
         self.extracted = {str(i): [opportunity(project_id=f'P-{i}')] for i in range(6)}
         for projects in self.extracted.values():

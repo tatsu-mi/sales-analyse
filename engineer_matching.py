@@ -80,6 +80,20 @@ def contains_quote(quote, source):
     return bool(quote.strip()) and re.sub(r'\s+', '', quote) in re.sub(r'\s+', '', source)
 
 
+def pending_record(item, error):
+    """Preserve an unvalidated project without trusting any of the AI response."""
+    reason = f'AIの適合判定を確認できないため判定保留: {error}'
+    return dict(
+        id=item['id'], state='unknown', evidence=reason,
+        requirements=[dict(criterion=index, state='unknown',
+                           project_quote=requirement['source_quote'], engineer_quote='', reason=reason)
+                      for index, requirement in enumerate(
+                          item.get('project', {}).get('mandatory_requirements', []), 1)],
+        unassessed_requirements=[],
+        commute=dict(mode='unknown', nearest_station='', workplace='', minutes=-1,
+                     route='', evidence=reason))
+
+
 def validate(answer, items, profile_text=''):
     try:
         records = json.loads(answer)['records']
