@@ -247,7 +247,7 @@ def prepare(config_path, checkpoint_dir, publish_dir):
     print("レポートを準備しました。Artifact保存・Teams通知待ちです。", flush=True)
 
 
-def notify(config_path, checkpoint_dir, publish_dir, report_url):
+def notify(config_path, checkpoint_dir, publish_dir, report_url, *, link_only=False):
     validate_report_url(report_url)
     config_path = config_path.resolve()
     config = app.load_config(config_path)
@@ -269,19 +269,22 @@ def notify(config_path, checkpoint_dir, publish_dir, report_url):
     report = (publish_dir / "report.md").read_text(encoding="utf-8")
     if not report.strip():
         raise app.ToolError("レポートが空のため通知を停止します。")
-    ranked = app.read_metadata(publish_dir / "ranked_emails.json")
-    rules = app.read_metadata(publish_dir / "priority_rules.json")
-    post_report(report_url, webhook, config["teams"]["timeout_seconds"], ranked, rules, report=report)
+    if link_only:
+        post_report(report_url, webhook, config["teams"]["timeout_seconds"])
+    else:
+        ranked = app.read_metadata(publish_dir / "ranked_emails.json")
+        rules = app.read_metadata(publish_dir / "priority_rules.json")
+        post_report(report_url, webhook, config["teams"]["timeout_seconds"], ranked, rules, report=report)
     app.analysis_pipeline.atomic_json(checkpoint_dir / "checkpoint.json", pending)
     app.record_last_run(state_path, boundary)
     (checkpoint_dir / "pending.json").unlink()
-    print("Teamsへのレポート全件の送信が受理されました。チェックポイントを更新しました。", flush=True)
+    print("Teamsへの通知が受理されました。チェックポイントを更新しました。", flush=True)
 
 
-def run(config_path, checkpoint_dir, publish_dir, report_url):
+def run(config_path, checkpoint_dir, publish_dir, report_url, *, link_only=False):
     validate_report_url(report_url)
     prepare(config_path, checkpoint_dir, publish_dir)
-    notify(config_path, checkpoint_dir, publish_dir, report_url)
+    notify(config_path, checkpoint_dir, publish_dir, report_url, link_only=link_only)
 
 
 def send_test_notification(config_path):
@@ -318,10 +321,11 @@ def main():
     parser.add_argument("--publish-dir", default=".gha-report", type=Path)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true", help="分析と通知待ち状態の保存のみ")
-    mode.add_argument("--notify-only", action="store_true", help="Artifact保存後にレポート全文を分割投稿し時刻を更新")
+    mode.add_argument("--notify-only", action="store_true", help="レポート保存後にTeamsへ通知し時刻を更新")
     mode.add_argument("--test-notification", action="store_true", help="メール取得・分析・時刻更新なしでTeamsへテスト文を投稿")
     mode.add_argument("--test-report", type=Path, metavar="REPORT_MD", help="ローカルのreport.mdをTeamsへ分割テスト投稿（メール取得・分析・時刻更新なし）")
-    parser.add_argument("--report-url", default=os.environ.get("REPORT_URL", ""), help="保存済みレポートArtifactのHTTPS URL")
+    parser.add_argument("--report-url", default=os.environ.get("REPORT_URL", ""), help="保存済みレポートのHTTPS URL")
+    parser.add_argument("--link-only", action="store_true", help="Teamsにはレポートのリンクだけを1件投稿")
     args = parser.parse_args()
     try:
         if args.test_notification:
@@ -331,9 +335,9 @@ def main():
         elif args.prepare_only:
             prepare(args.config, args.checkpoint_dir, args.publish_dir)
         elif args.notify_only:
-            notify(args.config, args.checkpoint_dir, args.publish_dir, args.report_url)
+            notify(args.config, args.checkpoint_dir, args.publish_dir, args.report_url, link_only=args.link_only)
         else:
-            run(args.config, args.checkpoint_dir, args.publish_dir, args.report_url)
+            run(args.config, args.checkpoint_dir, args.publish_dir, args.report_url, link_only=args.link_only)
     except (app.ToolError, OSError, ValueError) as error:
         # Error messages from configuration validation are safe; webhook/transport
         # exceptions are already translated by post_report.

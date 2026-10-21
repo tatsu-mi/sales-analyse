@@ -1,15 +1,52 @@
-name: SharePoint connection check
+name: SharePoint upload and Teams notification test
 
 on:
   workflow_dispatch:
 
 permissions:
+  contents: read
   id-token: write
 
 jobs:
-  check:
+  test-delivery:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: '1'
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Validate test settings
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          SHAREPOINT_DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID SHAREPOINT_DRIVE_ID SHAREPOINT_FOLDER_ID TEAMS_WEBHOOK_URL; do
+            if [ -z "${!name//[[:space:]]/}" ]; then
+              echo "::error::Missing setting: $name"
+              exit 1
+            fi
+          done
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          webhook = urlparse(os.environ['TEAMS_WEBHOOK_URL'])
+          if webhook.scheme != 'https' or not webhook.netloc:
+              raise SystemExit('TEAMS_WEBHOOK_URL must be an HTTPS URL.')
+          PY
+
       - name: Microsoft 365に認証
         uses: azure/login@v3
         with:
@@ -17,19 +54,44 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
 
-      - name: SharePointにテストファイルを保存
+      - name: SharePointにテストレポートを保存
+        id: upload
         env:
           DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
           FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
+        shell: bash
         run: |
-          printf 'SharePointへのアップロード接続確認です。\n' \
-            > "$RUNNER_TEMP/sharepoint-check.txt"
+          set -euo pipefail
+          filename="sharepoint-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.md"
+          printf '# SharePoint・Teams連携テスト\n\nSharePointへのアップロードとTeamsへのリンク投稿の接続確認です。\n\n実行ID: %s / 試行: %s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            > "$RUNNER_TEMP/sharepoint-test-report.md"
 
-          az rest \
+          report_url=$(az rest \
             --method PUT \
-            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/sharepoint-check.txt:/content" \
+            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/${filename}:/content" \
             --resource "https://graph.microsoft.com/" \
             --headers "Content-Type=text/plain; charset=utf-8" \
-            --body "@$RUNNER_TEMP/sharepoint-check.txt" \
-            --query '{id:id,name:name,webUrl:webUrl}' \
-            --output json
+            --body "@$RUNNER_TEMP/sharepoint-test-report.md" \
+            --query webUrl \
+            --output tsv)
+          REPORT_URL="$report_url" python -c 'import os; from scheduled_run import validate_report_url; validate_report_url(os.environ["REPORT_URL"])'
+          printf 'report-url=%s\n' "$report_url" >> "$GITHUB_OUTPUT"
+
+      - name: Teamsにテストレポートのリンクを投稿
+        env:
+          REPORT_URL: ${{ steps.upload.outputs.report-url }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from scheduled_run import send_card, text_card_payload, validate_report_url
+
+          report_url = os.environ['REPORT_URL']
+          validate_report_url(report_url)
+          payload = text_card_payload(f'【テスト投稿】[SharePointのテストレポートを開く]({report_url})')
+          send_card(payload, os.environ['TEAMS_WEBHOOK_URL'], 60)
+          print('Teamsがテストレポートのリンク投稿を受理しました。')
+          PY

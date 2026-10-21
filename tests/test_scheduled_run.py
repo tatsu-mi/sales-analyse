@@ -312,6 +312,42 @@ class ScheduledRunTests(unittest.TestCase):
         self.assertEqual(self.checkpoint.read_bytes(), before)
         self.assertTrue((self.checkpoint_dir / 'pending.json').exists())
 
+    def test_cli_link_only_sends_one_sharepoint_link_then_commits_checkpoint(self):
+        self.seed()
+        before = self.checkpoint.read_bytes()
+        with patch.object(app, 'iter_fetch_mails', return_value=iter([])):
+            scheduled.prepare(self.config_path, self.checkpoint_dir, self.publish_dir)
+        (self.publish_dir / 'report.md').write_text('非公開の本文\n' * 10000, encoding='utf-8')
+        # Link delivery needs neither rankings nor summaries in the Teams message.
+        (self.publish_dir / 'ranked_emails.json').unlink()
+        (self.publish_dir / 'priority_rules.json').unlink()
+        url = 'https://example.sharepoint.com/sites/sales/Reports/report-123-1.md'
+        with patch.dict(os.environ, {'REPORT_URL': url}), \
+                patch.object(scheduled.sys, 'argv', [
+                    'scheduled_run.py', '--config', str(self.config_path),
+                    '--checkpoint-dir', str(self.checkpoint_dir),
+                    '--publish-dir', str(self.publish_dir), '--notify-only', '--link-only']), \
+                patch.object(scheduled, 'send_card') as send:
+            self.assertEqual(scheduled.main(), 0)
+        send.assert_called_once()
+        text = json.loads(send.call_args.args[0])['attachments'][0]['content']['body'][0]['text']
+        self.assertEqual(text, f'[メール分析レポートを開く]({url})')
+        self.assertNotEqual(self.checkpoint.read_bytes(), before)
+        self.assertFalse((self.checkpoint_dir / 'pending.json').exists())
+
+    def test_link_only_failure_preserves_pending_checkpoint_and_local_boundary(self):
+        self.seed()
+        before = self.checkpoint.read_bytes()
+        with patch.object(app, 'iter_fetch_mails', return_value=iter([])):
+            scheduled.prepare(self.config_path, self.checkpoint_dir, self.publish_dir)
+        with patch.object(scheduled, 'send_card', side_effect=app.ToolError('failed')):
+            with self.assertRaises(app.ToolError):
+                scheduled.notify(self.config_path, self.checkpoint_dir, self.publish_dir,
+                                 'https://example.sharepoint.com/report.md', link_only=True)
+        self.assertEqual(self.checkpoint.read_bytes(), before)
+        self.assertEqual(json.loads(self.state.read_text())['last_run_at'], '2026-10-01T09:15:00+09:00')
+        self.assertTrue((self.checkpoint_dir / 'pending.json').exists())
+
     def test_failure_on_second_part_stops_delivery_and_preserves_checkpoint(self):
         self.seed()
         before = self.checkpoint.read_bytes()

@@ -38,6 +38,10 @@ jobs:
     if: needs.calendar.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
     env:
       PYTHONUTF8: '1'
       PYTHONUNBUFFERED: '1'
@@ -57,6 +61,22 @@ jobs:
 
       - name: Validate TOML without credentials
         run: python validate_config.py
+
+      - name: Validate SharePoint settings
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          SHAREPOINT_DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
+          SHAREPOINT_FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID SHAREPOINT_DRIVE_ID SHAREPOINT_FOLDER_ID; do
+            if [ -z "${!name//[[:space:]]/}" ]; then
+              echo "::error::Missing setting: $name"
+              exit 1
+            fi
+          done
 
       - name: Restore checkpoint from the last successful run
         env:
@@ -98,7 +118,6 @@ jobs:
         run: python scheduled_run.py --config config.toml --prepare-only
 
       - name: Save report files
-        id: upload-report
         uses: actions/upload-artifact@v7
         with:
           name: mail-report
@@ -107,13 +126,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Send full report to Teams in parts and commit checkpoint
+      - name: Authenticate to Microsoft 365
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Upload report to SharePoint
+        id: sharepoint-report
+        env:
+          DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
+          FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .gha-report/report.md
+          filename="report-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.md"
+          report_url=$(az rest \
+            --method PUT \
+            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/${filename}:/content" \
+            --resource "https://graph.microsoft.com/" \
+            --headers "Content-Type=text/plain; charset=utf-8" \
+            --body "@.gha-report/report.md" \
+            --query webUrl \
+            --output tsv)
+          REPORT_URL="$report_url" python -c 'import os; from scheduled_run import validate_report_url; validate_report_url(os.environ["REPORT_URL"])'
+          printf 'report-url=%s\n' "$report_url" >> "$GITHUB_OUTPUT"
+
+      - name: Send SharePoint link to Teams and commit checkpoint
         env:
           SAKURA_MAIL_HOST: ${{ secrets.SAKURA_MAIL_HOST }}
           SAKURA_MAIL_USERNAME: ${{ secrets.SAKURA_MAIL_USERNAME }}
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          REPORT_URL: ${{ steps.upload-report.outputs.artifact-url }}
-        run: python scheduled_run.py --config config.toml --notify-only
+          REPORT_URL: ${{ steps.sharepoint-report.outputs.report-url }}
+        run: python scheduled_run.py --config config.toml --notify-only --link-only
 
       - name: Save delivered checkpoint
         uses: actions/upload-artifact@v7

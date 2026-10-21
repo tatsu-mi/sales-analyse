@@ -41,10 +41,23 @@ Teamsのテスト投稿後は投稿先チャネルで表示を確認してくだ
 
 ## GitHub Actions（GHA）での手動実行
 
-1. GitHubの **Settings → Secrets and variables → Actions → Repository secrets** に「シークレット」の5項目を登録します。
-2. **Actions → Mail analysis and Teams report → Run workflow** を開きます。
-3. デフォルトブランチを選び、**Run workflow** をクリックします。
-4. 実行結果とTeamsの通知を確認します。
+1. GitHubの **Settings → Secrets and variables → Actions → Repository secrets** に「シークレット」の値を登録します。
+2. 下記の「SharePointへの接続設定」を完了します。
+3. **Actions → Mail analysis and Teams report → Run workflow** を開きます。
+4. デフォルトブランチを選び、**Run workflow** をクリックします。
+5. 実行結果とTeamsに投稿されたリンクを開き、SharePointのレポートを確認します。
+
+## SharePointへの接続設定
+
+1. Entraのアプリ登録に、Microsoft Graphのアプリケーション権限 `Sites.Selected` を追加し、管理者同意を付与します。
+2. 管理者に、保存先SharePointサイトへのアプリの `write` 許可を依頼します。
+3. アプリの「証明書とシークレット → フェデレーション資格情報」で、対象GitHubリポジトリのデフォルトブランチを登録します。GitHub Environmentを使用する場合は、ブランチではなくそのEnvironmentに合わせます。
+4. Repository secretsに `AZURE_CLIENT_ID` と `AZURE_TENANT_ID`、Repository variablesに `SHAREPOINT_DRIVE_ID`（ライブラリID）と `SHAREPOINT_FOLDER_ID`（保存先フォルダID）を登録します。
+5. レポートを読む人に保存先フォルダの閲覧権限を設定します。
+
+設定済みのIDがSecrets側にある場合は、Variables側に登録してください。クライアントシークレットとAzureサブスクリプションIDの登録は不要です。
+
+接続テストは **Actions → SharePoint upload and Teams notification test → Run workflow** から、OIDCで許可したブランチを選んで実行します。Teamsの「テスト投稿」のリンクを開き、SharePointのテストレポートを確認してください。テスト後のファイルは必要に応じてSharePointから削除してください。
 
 ## シークレット
 
@@ -57,6 +70,8 @@ Teamsのテスト投稿後は投稿先チャネルで表示を確認してくだ
 | `SAKURA_MAIL_PASSWORD` | IMAPパスワード |
 | `GEMINI_API_KEY` | Gemini APIキー |
 | `TEAMS_WEBHOOK_URL` | Teams WorkflowsのWebhook URL。GHAの通知で使用 |
+| `AZURE_CLIENT_ID` | Entraのアプリケーション（クライアント）ID。GHAのみ |
+| `AZURE_TENANT_ID` | Entraのディレクトリ（テナント）ID。GHAのみ |
 
 ```dotenv
 SAKURA_MAIL_HOST="example.sakura.ne.jp"
