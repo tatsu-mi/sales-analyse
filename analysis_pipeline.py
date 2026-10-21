@@ -422,6 +422,10 @@ class Pipeline:
             "source_quote=メール本文の連続した原文引用。年数や工程を技術名にまとめず個別項目としてください。"
             "OR条件は選択肢を保持した一項目、AND条件は分割。歓迎・尚可条件は含めずskillsに区別して残します。"
             "必須か不明な条件も確認対象として含め、勝手に歓迎条件へ緩和しないでください。必須条件の記載がなければ空配列。"
+            "抽出後、各案件を元本文と再照合し、必須条件の漏れをmandatory_requirementsに補ってから返してください。"
+            "照合工程には本文を渡さないため、経験年数・工程・開始時期・単価・応募制約を落とさず、"
+            "locationには全ての出社先・出社頻度・初日や研修時の出社・居住地制限を保持してください。"
+            "各項目は条件と数値を保って簡潔に記載し、他案件の条件やメール署名を混ぜないでください。"
             "情報がない文字列項目は空文字。創作・金額合算・外部知識による補完はしないでください。"
             "一つのメールに複数案件があれば全て抽出してください。本文が省略されたメールも判別できる情報だけ記録してください。"
             + f"\n対象期間: {self.metadata['start_date']} ～ {self.metadata['end_date']}（日本時間）。"
@@ -611,6 +615,14 @@ class Pipeline:
                 candidates.append(value)
         result = []
         audit = []
+        # Reuse a compact, structured project across engineers; keep source quotes
+        # for validation without resending whole mails or shared assessments.
+        fields = ('title', 'project_id', 'skills', 'mandatory_requirements',
+                  'budget', 'start', 'location', 'contract', 'deadline_iso', 'notes')
+        items = [{"id": str(i),
+                  "project": {key: value["latest"][key] for key in fields},
+                  "source_truncated": value.get('body_truncated', False)}
+                 for i, value in enumerate(candidates)]
         for profile in self.profiles:
             print(f"エンジニア別の案件照合: {profile['file']} / {len(candidates)}案件", flush=True)
             prompt = (
@@ -625,9 +637,10 @@ class Pipeline:
                 "criterion=1始まりの番号、state=match/mismatch/unknown、project_quote=その条件の原文引用、"
                 "engineer_quote=この人のプロフィール本文の連続した原文引用（記載なしなら空文字）、reason=判断理由・不足情報。"
                 "各条件の引用は要約や省略記号を使わずそのまま抜き出す。stateの総合判定も返す。"
-                "source_bodyの元メールとも照合し、対象案件の必須条件がmandatory_requirementsから漏れていないか再確認する。"
-                "漏れがある場合はunassessed_requirementsにその条件の原文引用を全て返す。漏れがなければ空配列。"
-                "複数案件メールでは他案件の条件を混ぜない。"
+                "projectは本文から必須条件を抽出・再確認した照合用データで、元メール本文は渡されません。"
+                "projectの他の項目にmandatory_requirementsに含まれていない必須条件が明記されている場合は、"
+                "unassessed_requirementsにその条件の記載を全て返す。なければ空配列。"
+                "省略された本文の内容を推測しない。"
                 "エンジニアのfeedbackは人が記録した過去の照合結果と理由です。"
                 "同じ誤判定を避けるため、理由が今回の必須条件に当てはまるか確認する。"
                 "案件名が似ているだけで一律に除外せず、今回の条件とプロフィールの事実で判定する。"
@@ -646,9 +659,6 @@ class Pipeline:
                 "複数の出社先がある場合は全て90分以内であることを確認し、最長の時間を返す。"
                 "フルリモートでも居住地制限などの明示条件はスキル適合判定stateで確認する。"
                 "全idを各1回だけrecordsに返してください。\nエンジニア: " + encoded(profile))
-            items = [{"id": str(i), "project": value["latest"],
-                      "source_body": value.get('source_body', ''),
-                      "source_truncated": value.get('body_truncated', False)} for i, value in enumerate(candidates)]
             checks = []
             for index, (batch, text, tokens) in enumerate(self.groups(items, prompt, self.settings, self.report_limit, engineer_matching.SCHEMA)):
                 checks.extend(self.match_part(batch, text, tokens, prompt, f"engineer_{digest(profile['file'])[:12]}_{index}", profile['text']))

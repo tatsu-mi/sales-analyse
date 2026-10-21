@@ -202,6 +202,45 @@ class PipelineTests(unittest.TestCase):
             changed_run.run()
         self.assertEqual(len(match_calls), 15)
 
+    def test_engineer_matching_uses_compact_projects_in_engineer_order(self):
+        instance = self.make([mail(1)])
+        instance.profiles = [dict(file=name, sha256=name, text='Python') for name in ('A', 'B')]
+        projects = []
+        for index in range(2):
+            project = opportunity(project_id=f'P-{index}')
+            project.update(start='11月から', location='初日だけ東京に出社、以後リモート',
+                           contract='居住地は国内', notes='基本設計経験は要確認',
+                           contact='private-contact', evidence='shared-evidence')
+            for check in project['assessments']:
+                check.update(state='match', evidence='shared-assessment')
+            projects.append(dict(kind='ses', uid=str(index), latest=project,
+                                 received_at='2026-10-01T09:00:00+09:00',
+                                 expired_at_period_end=False, body_truncated=index == 1,
+                                 source_body='unused-mail-body' * 1000))
+        calls = []
+
+        def matching(*args, **kwargs):
+            batch = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
+            engineer = 'A' if '"file":"A"' in args[2] else 'B'
+            for item in batch:
+                original = projects[int(item['id'])]
+                calls.append((engineer, item['project']['project_id']))
+                self.assertNotIn('source_body', item)
+                for field in ('contact', 'evidence', 'assessments'):
+                    self.assertNotIn(field, item['project'])
+                for field, value in item['project'].items():
+                    self.assertEqual(value, original['latest'][field])
+                self.assertEqual(item['source_truncated'], original['body_truncated'])
+                self.assertLess(len(pipeline.encoded(item)), len(pipeline.encoded(original)) // 10)
+            return json.dumps(dict(records=[checked_record(item) for item in batch]))
+
+        with patch.object(instance.api, 'generate', side_effect=matching):
+            result = instance.rank_engineers(projects)
+        self.assertEqual(calls, [('A', 'P-0'), ('A', 'P-1'), ('B', 'P-0'), ('B', 'P-1')])
+        for group in result:
+            self.assertEqual([entry['uid'] for entry in group['entries']], ['0'])
+            self.assertEqual([entry['uid'] for entry in group['pending_entries']], ['1'])
+
     def test_engineer_response_truncation_splits_without_losing_candidates(self):
         instance = self.make([mail(1)])
         items = [{'id': str(i)} for i in range(3)]
