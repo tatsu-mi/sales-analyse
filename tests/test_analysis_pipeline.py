@@ -121,6 +121,45 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(app.ToolError):
             list(instance.fit([mail(7, "x" * 3000)], "prompt", instance.settings, 1024))
 
+    def test_resume_after_first_engineer_skips_titles_extraction_and_completed_person(self):
+        self.extracted = {'1': [opportunity()]}
+        instance = self.make([mail(1, 'Python')])
+        profiles = [dict(file=name, sha256=name, text='Python') for name in ('A', 'B')]
+        instance.profiles = profiles
+        original_generate = self.api.generate
+
+        def generate(*args, **kwargs):
+            if kwargs.get('response_schema') != engineer_matching.SCHEMA:
+                return original_generate(*args, **kwargs)
+            items = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
+            return json.dumps({'records': [checked_record(item) for item in items]})
+
+        stages = []
+
+        def interrupt(output, stage):
+            stages.append(stage)
+            if stage == 'engineer_completed':
+                raise app.ToolError('interrupted after durable save')
+
+        instance.progress = interrupt
+        with patch.object(self.api, 'generate', side_effect=generate):
+            with self.assertRaisesRegex(app.ToolError, 'interrupted'):
+                instance.run()
+        self.assertEqual(stages, ['titles_filtered', 'extracted', 'engineer_completed'])
+        resumed = pipeline.Pipeline(self.api, self.config, 'key', instance.source,
+                                    instance.output, app.read_metadata(instance.output / 'metadata.json'))
+        resumed.profiles = profiles
+        resumed.limiter.reserve = Mock()
+        with patch.object(resumed, 'screen_part', side_effect=AssertionError('title repeated')), \
+                patch.object(resumed, 'extract', side_effect=AssertionError('extraction repeated')), \
+                patch.object(self.api, 'generate', side_effect=generate), \
+                patch.object(resumed, 'match_part', wraps=resumed.match_part) as match:
+            resumed.run()
+        self.assertEqual(match.call_count, 1)
+        self.assertIn(pipeline.digest('B')[:12], match.call_args.args[4])
+        audit = json.loads((instance.output / 'engineer_assessments.json').read_text(encoding='utf-8'))
+        self.assertEqual([record['engineer'] for record in audit], ['A', 'B'])
+
     def test_requirement_extraction_must_quote_the_original_mail(self):
         project = opportunity()
         record = dict(uid='1', kind='ses', tags=[], market_notes='', opportunities=[project])

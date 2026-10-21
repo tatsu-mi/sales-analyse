@@ -785,6 +785,16 @@ def run(args):
     root = Path(analysis["output_dir"])
     if not root.is_absolute():
         root = config_path.parent / root
+    resume_dir = getattr(args, "resume_dir", None)
+    if resume_dir:
+        output = Path(resume_dir)
+        metadata = read_metadata(output / "metadata.json")
+        start, stop = saved_period(metadata)
+        source = output / "emails.jsonl"
+        validate_saved_mails(source, metadata, analysis["max_emails"])
+        if metadata.get("dataset_key") != dataset_key(config, start, stop):
+            raise ToolError("保存済み実行とメールボックス・取得条件が異なります。")
+        return finish_analysis(config, api_key, source, output, metadata, None, stop, args)
     source_arg = getattr(args, "emails_file", None)
     state_path = None
     if source_arg:
@@ -802,7 +812,8 @@ def run(args):
             start, stop = analysis_period(analysis, args.start, args.end)
         else:
             state_path = last_run_path(root, config)
-            start, stop = incremental_period(analysis, state_path, started_at)
+            start, stop = (getattr(args, 'run_period', None)
+                           or incremental_period(analysis, state_path, started_at))
             if start == stop:
                 print("前回実施時刻から新しい取得期間がないため、処理を終了します。", flush=True)
                 return
@@ -848,6 +859,14 @@ def run(args):
         write_json(output / "metadata.json", metadata)
         raise
     write_json(output / "metadata.json", metadata)
+    progress = getattr(args, "progress", None)
+    if progress:
+        progress(output, "fetched")
+    return finish_analysis(config, api_key, source, output, metadata, state_path, stop, args)
+
+
+def finish_analysis(config, api_key, source, output, metadata, state_path, stop, args):
+    analysis = config["analysis"]
     count = metadata["count"]
     print(f"メール保存完了：{count:,}通（本文の一部を省略したメール：{metadata['truncated_bodies']:,}通）", flush=True)
     print(f"保存先: {output}", flush=True)
@@ -875,7 +894,12 @@ def run(args):
         return output
     try:
         print("分析の準備中...", flush=True)
-        summary = analysis_pipeline.analyze(sys.modules[__name__], config, api_key, source, output, metadata)
+        if getattr(args, "progress", None):
+            pipeline = analysis_pipeline.Pipeline(sys.modules[__name__], config, api_key, source, output, metadata)
+            pipeline.progress = args.progress
+            summary = pipeline.run()
+        else:
+            summary = analysis_pipeline.analyze(sys.modules[__name__], config, api_key, source, output, metadata)
         write_report(output, metadata, summary)
     except (ToolError, OSError, KeyboardInterrupt):
         metadata["status"] = "analysis_failed"

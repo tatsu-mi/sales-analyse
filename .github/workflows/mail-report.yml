@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: mail-report
@@ -40,7 +39,6 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
-      actions: read
       id-token: write
     env:
       PYTHONUTF8: '1'
@@ -77,36 +75,6 @@ jobs:
               exit 1
             fi
           done
-
-      - name: Restore checkpoint from the last successful run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          successful_runs=$(gh api --method GET --paginate "repos/$GH_REPO/actions/workflows/mail-report.yml/runs" \
-            -f branch="$DEFAULT_BRANCH" -f status=success -f per_page=100 \
-            --jq '.workflow_runs[].id')
-          previous_run=''
-          for candidate in $successful_runs; do
-            # Calendar-only success has no delivered checkpoint. Ignore those runs.
-            skipped=$(gh api --method GET "repos/$GH_REPO/actions/runs/$candidate/jobs" \
-              -f per_page=100 --jq 'any(.jobs[]; .name == "report" and .conclusion == "skipped")')
-            if [ "$skipped" = true ]; then
-              continue
-            fi
-            previous_run="$candidate"
-            break
-          done
-          if [ -n "$previous_run" ]; then
-            # Missing/expired artifacts must fail rather than silently skip old mail.
-            gh run download "$previous_run" --name mail-checkpoint --dir .gha-state
-            test -f .gha-state/checkpoint.json
-          else
-            echo 'First successful delivery: use analysis.lookback_hours from TOML.'
-          fi
 
       - name: Authenticate to Microsoft 365
         uses: azure/login@v3
@@ -158,8 +126,10 @@ jobs:
               raise SystemExit('engineers.md・priority_rules.mdの取得・UTF-8形式・見出しを確認してください。') from None
           PY
 
-      - name: Analyze and prepare report
+      - name: Analyze, persist progress, publish and notify
         env:
+          DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
+          FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
           SAKURA_MAIL_HOST: ${{ secrets.SAKURA_MAIL_HOST }}
           SAKURA_MAIL_USERNAME: ${{ secrets.SAKURA_MAIL_USERNAME }}
           SAKURA_MAIL_PASSWORD: ${{ secrets.SAKURA_MAIL_PASSWORD }}
@@ -167,48 +137,7 @@ jobs:
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         shell: bash
         run: |
-          # Analysis output can contain names, project details and API responses.
-          # Keep it on the runner; never publish it as a log or artifact.
-          if ! python scheduled_run.py --config config.toml --prepare-only > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
-            echo '::error::Report preparation failed. Check configuration and external service availability.'
+          if ! python sharepoint_run.py > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
+            echo "::error::Run failed. Resume with run ID ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}."
             exit 1
           fi
-
-      - name: Upload report to SharePoint
-        id: sharepoint-report
-        env:
-          DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
-          FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s .gha-report/report.md
-          reports_folder_id=$(python sharepoint_reports.py)
-          filename="report-$(TZ=Asia/Tokyo date +%Y%m%d%H%M).md"
-          report_url=$(az rest \
-            --method PUT \
-            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${reports_folder_id}:/${filename}:/content" \
-            --resource "https://graph.microsoft.com/" \
-            --headers "Content-Type=text/plain; charset=utf-8" \
-            --body "@.gha-report/report.md" \
-            --query webUrl \
-            --output tsv)
-          REPORT_URL="$report_url" python -c 'import os; from scheduled_run import validate_report_url; validate_report_url(os.environ["REPORT_URL"])'
-          printf 'report-url=%s\n' "$report_url" >> "$GITHUB_OUTPUT"
-
-      - name: Send SharePoint link to Teams and commit checkpoint
-        env:
-          SAKURA_MAIL_HOST: ${{ secrets.SAKURA_MAIL_HOST }}
-          SAKURA_MAIL_USERNAME: ${{ secrets.SAKURA_MAIL_USERNAME }}
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          REPORT_URL: ${{ steps.sharepoint-report.outputs.report-url }}
-        run: python scheduled_run.py --config config.toml --notify-only --link-only
-
-      - name: Save delivered checkpoint
-        uses: actions/upload-artifact@v7
-        with:
-          name: mail-checkpoint
-          path: .gha-state/checkpoint.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 90

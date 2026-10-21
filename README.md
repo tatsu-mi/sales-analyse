@@ -47,6 +47,14 @@ Teamsのテスト投稿後は投稿先チャネルで表示を確認してくだ
 4. デフォルトブランチを選び、**Run workflow** をクリックします。
 5. 実行結果とTeamsに投稿されたリンクを開き、SharePointのレポートを確認します。
 
+途中で失敗した場合は **Actions → Resume mail analysis → Run workflow** を開き、デフォルトブランチを選んで `run_id` に元の実行の `GitHub実行ID-試行回数`（例：`123456789-1`）を入力してください。通常ワークフローの失敗メッセージにもこのIDを表示します。再開が失敗した場合も同じIDを指定します。
+
+保存先の `temporary-runs/<run_id>/` にある `progress.json` とスナップショットを残してください。実行時の `config.toml`、`engineers.md`、`priority_rules.md` も同じフォルダで確認できます。再開には保存された条件を使用するため、条件を変更して実行する場合は通常ワークフローを起動してください。完了済みの実行や、別の実行が先に通知を完了した古い実行は再開できません。
+
+前回実行時間はSharePointの `run-state/checkpoint.json` で管理します。このファイルがない初回は、設定の `analysis.lookback_hours` に従って取得します。チェックポイントの削除・編集は取得期間に影響するため、復旧時以外は行わないでください。
+
+一時保存フォルダにはメール本文やプロフィールが含まれます。対象フォルダの閲覧権限を運用担当者に設定してください。不要になった完了済みの `temporary-runs/<run_id>/` はSharePointから削除できます。
+
 ## SharePointへの接続設定
 
 1. Entraのアプリ登録に、Microsoft Graphのアプリケーション権限 `Sites.Selected` を追加し、管理者同意を付与します。
@@ -141,4 +149,3 @@ python evaluate_matching.py output/対象実行フォルダ/engineer_assessments
 - 過去のActionsの `mail-report` Artifactと、個人名・案件情報を含むログを削除してください。今後のGHAではレポートのArtifact保存を行わず、分析ログも公開しません。レポートはSharePointで確認してください。
 - `.env`、実メール、出力レポート、スキルシートをコミットしないでください。`output/`、`.gha-report/`、`.gha-state/` はGit管理の対象外です。
 - 判定条件はSharePointの `priority_rules.md` で管理し、旧 `priority_rules.toml` がGit履歴に残っていないことを確認してください。`config.toml`、公開用サンプル、テストやコメントにも社内条件・実データを書かないでください。
-- `mail-checkpoint` Artifactは次回実行の復元に使用します。全実行履歴を削除する場合は、チェックポイントを退避して復元方法を整えてから削除してください。

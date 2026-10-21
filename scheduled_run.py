@@ -186,7 +186,7 @@ def send_report_cards(payloads, webhook_url, timeout):
         send_card(payload, webhook_url, timeout)
 
 
-def prepare(config_path, checkpoint_dir, publish_dir):
+def prepare(config_path, checkpoint_dir, publish_dir, *, resume_dir=None, progress=None, run_period=None):
     config_path = config_path.resolve()
     config = app.load_config(config_path)
     webhook = os.environ.get("TEAMS_WEBHOOK_URL", "").strip()
@@ -215,7 +215,8 @@ def prepare(config_path, checkpoint_dir, publish_dir):
     # Validate even before running; invalid/future checkpoints must not cause a fallback.
     app.incremental_period(config["analysis"], state_path, app.datetime.now(app.JST))
     args = SimpleNamespace(config=str(config_path), start=None, end=None, fetch_only=False,
-                           emails_file=None, refresh=False, log_file=None)
+                           emails_file=None, refresh=False, log_file=None, resume_dir=resume_dir,
+                           progress=progress, run_period=run_period)
     previous_state = state_path.read_bytes() if state_path.exists() else None
     try:
         output = app.run(args)
@@ -244,7 +245,7 @@ def prepare(config_path, checkpoint_dir, publish_dir):
     app.analysis_pipeline.atomic_json(checkpoint_dir / "pending.json", {
         "mailbox": state_path.stem, "last_run_at": metadata["stop_at"],
     })
-    print("レポートを準備しました。Artifact保存・Teams通知待ちです。", flush=True)
+    print("レポートを準備しました。レポート保存・Teams通知待ちです。", flush=True)
 
 
 def notify(config_path, checkpoint_dir, publish_dir, report_url, *, link_only=False):
