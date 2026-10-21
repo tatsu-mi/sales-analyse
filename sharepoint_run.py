@@ -218,8 +218,17 @@ def execute(store, work, run_id, resume=False):
     if manifest['status'] not in ('prepared', 'report_uploaded', 'notified'):
         run_period = tuple(app.datetime.fromisoformat(manifest['period'][key])
                            for key in ('start_at', 'stop_at'))
-        scheduled_run.prepare(config, state_dir, publish, resume_dir=output, progress=save,
-                              run_period=run_period)
+        try:
+            scheduled_run.prepare(config, state_dir, publish, resume_dir=output, progress=save,
+                                  run_period=run_period)
+        except Exception:
+            # Each validated AI response is already cached locally. Upload those
+            # responses on failure so resume can reuse them without new AI calls.
+            try:
+                save(None, manifest['status'])
+            except Exception:
+                run_progress.report('checkpoint_save_failed')
+            raise
         save(output, 'prepared')
     if manifest['status'] == 'prepared':
         run_progress.report('publishing')

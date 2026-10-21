@@ -10,6 +10,8 @@ from unittest.mock import patch
 import mail_analyzer as app
 import sharepoint_run as runner
 import run_progress
+import analysis_pipeline
+import title_filter
 
 snapshot_settings = runner.snapshot_settings
 
@@ -184,6 +186,94 @@ class SharePointRunTests(unittest.TestCase):
             self.execute('resumed', resume=True)
         self.assertEqual([value.isoformat() for value in fetch.call_args.args[1:]],
                          [period['start_at'], period['stop_at']])
+
+    def test_analysis_failure_uploads_cached_ai_results_and_resume_does_not_resend_them(self):
+        mails = [dict(uid=str(i), body=f'mail {i}', body_truncated=False,
+                      subject=f'project {i}', received_at='2026-10-01T09:00:00+09:00')
+                 for i in (1, 2)]
+        uploads, extraction_calls, uploaded_bodies = {}, [], []
+        fail = True
+        snapshots_before_analysis = None
+        original_groups = analysis_pipeline.Pipeline.groups
+
+        def groups(pipeline, items, prompt, settings, limit, schema=None):
+            if schema == analysis_pipeline.EXTRACTION_SCHEMA:
+                for item in items:
+                    yield [item], analysis_pipeline.encoded(item) + '\n', 100
+            else:
+                yield from original_groups(pipeline, items, prompt, settings, limit, schema)
+
+        def upload(settings, key, path):
+            items = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+            uri = str(len(uploads))
+            uploads[uri] = items
+            uploaded_bodies.extend(item['uid'] for item in items if 'body' in item)
+            return {'uri': uri, 'mimeType': 'text/plain'}
+
+        def generate(settings, key, prompt, *, file_data, response_schema, before_request):
+            nonlocal snapshots_before_analysis
+            before_request()
+            items = uploads[file_data['uri']]
+            if response_schema == title_filter.SCHEMA:
+                return json.dumps({'records': [dict(uid=item['uid'], exclude=False) for item in items]})
+            self.assertEqual(response_schema, analysis_pipeline.EXTRACTION_SCHEMA)
+            snapshot_count = sum('/snapshot-' in name for name in self.store.files)
+            if snapshots_before_analysis is None:
+                snapshots_before_analysis = snapshot_count
+            uid = items[0]['uid']
+            extraction_calls.append(uid)
+            if fail and uid == '2':
+                # Successful AI calls are cached locally without immediate uploads.
+                self.assertEqual(snapshot_count, snapshots_before_analysis)
+                raise app.ToolError('rate limit interrupted analysis')
+            return json.dumps({'records': [dict(uid=item['uid'], kind='other', tags=[],
+                                                 market_notes='', opportunities=[]) for item in items]})
+
+        with patch.object(app, 'model_limits', return_value={'inputTokenLimit': 1048576, 'outputTokenLimit': 65536}), \
+                patch.object(app, 'count_input_tokens', return_value=100), \
+                patch.object(app, 'upload_mail_file', side_effect=upload), \
+                patch.object(app, 'generate', side_effect=generate), \
+                patch.object(analysis_pipeline.Pipeline, 'groups', groups), \
+                patch.object(analysis_pipeline.RateLimiter, 'reserve'), \
+                patch.object(runner.scheduled_run, 'send_card'):
+            with patch.object(app, 'iter_fetch_mails', return_value=iter(mails)):
+                with self.assertRaisesRegex(app.ToolError, 'rate limit interrupted'):
+                    self.execute('first')
+            manifest = self.store.get_json('temporary-runs/123-1/progress.json')
+            self.assertEqual(sum('/snapshot-' in name for name in self.store.files),
+                             snapshots_before_analysis + 1)
+            self.assertIn(manifest['archive'], '\n'.join(self.store.files))
+            fail = False
+            with patch.object(app, 'iter_fetch_mails', side_effect=AssertionError('mail fetched again')):
+                self.execute('resumed', resume=True)
+        self.assertEqual(extraction_calls, ['1', '2', '2'])
+        self.assertEqual(uploaded_bodies.count('1'), 1)
+        self.assertEqual(self.store.get_json('temporary-runs/123-1/progress.json')['status'], 'complete')
+
+    def test_failed_error_snapshot_keeps_original_error_and_last_saved_snapshot(self):
+        failing = False
+        original_put = self.store.put
+        public = io.StringIO()
+
+        def put(path, data):
+            if failing and '/snapshot-' in path:
+                raise OSError('snapshot upload failed')
+            return original_put(path, data)
+
+        def prepare(*args, **kwargs):
+            nonlocal failing
+            failing = True
+            raise app.ToolError('original analysis failure')
+
+        with patch.object(self.store, 'put', side_effect=put), \
+                patch.object(runner.scheduled_run, 'prepare', side_effect=prepare), \
+                patch.object(run_progress, 'stream', public):
+            with self.assertRaisesRegex(app.ToolError, 'original analysis failure'):
+                self.execute('first')
+        manifest = self.store.get_json('temporary-runs/123-1/progress.json')
+        self.assertEqual(manifest['status'], 'created')
+        self.assertIn('temporary-runs/123-1/' + manifest['archive'], self.store.files)
+        self.assertIn('前回保存分から再開', public.getvalue())
 
     def test_cli_saves_error_history_redacts_credentials_and_preserves_resume_state(self):
         log = self.root / 'mail-analysis.log'

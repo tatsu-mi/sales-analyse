@@ -29,6 +29,7 @@ MESSAGES = {
     'complete': 'レポートの保存・通知と前回実行時間の更新が完了しました。',
     'error_saved': '処理に失敗しました。詳細エラーログをSharePointの実行用一時フォルダへ保存しました。',
     'error_save_failed': '処理に失敗しました。SharePointへのエラーログ保存にも失敗しました。',
+    'checkpoint_save_failed': '最新の分析途中結果をSharePointへ保存できませんでした。前回保存分から再開します。',
 }
 
 
