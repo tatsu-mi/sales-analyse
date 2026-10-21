@@ -54,7 +54,7 @@ Teamsのテスト投稿後は投稿先チャネルで表示を確認してくだ
 3. アプリの「証明書とシークレット → フェデレーション資格情報」で、対象GitHubリポジトリのデフォルトブランチを登録します。GitHub Environmentを使用する場合は、ブランチではなくそのEnvironmentに合わせます。
 4. Repository secretsに `AZURE_CLIENT_ID` と `AZURE_TENANT_ID`、Repository variablesに `SHAREPOINT_DRIVE_ID`（ライブラリID）と `SHAREPOINT_FOLDER_ID`（保存先フォルダID）を登録します。
 5. レポートを読む人に保存先フォルダの閲覧権限を設定します。
-6. 同じ保存先フォルダの直下に、UTF-8の `engineers.md` をアップロードします。
+6. 同じ保存先フォルダの直下に、UTF-8の `engineers.md` と `priority_rules.md` をアップロードします。
 
 設定済みのIDがSecrets側にある場合は、Variables側に登録してください。クライアントシークレットとAzureサブスクリプションIDの登録は不要です。
 
@@ -100,6 +100,25 @@ SharePointのレポート保存先フォルダにある `engineers.md` を編集
   - 理由：必須のバックエンド実務3年以上を確認できない。研修期間を実務に含めない。
 ```
 
+## 判定条件の設定
+
+SharePointのレポート保存先フォルダに `priority_rules.md` を配置してください。GHAでは毎回取得し、形式を検証してから分析を開始します。取得や検証に失敗すると停止します。
+
+新しく作る場合は `priority_rules.example.md` をコピーし、各見出しの条件を編集してください。`## SES: 表示名` と `## 受託: 表示名` の条件は、1項目ずつ `- ` で始めます。件名パターンはバッククォートで囲んだ正規表現、機械選別・AI選別は `有効` または `無効` で指定します。表示件数は1〜10、一括処理件数は1〜100です。サンプルの見出し名は維持してください。
+
+ローカルではSharePointからダウンロードし、`analysis.priority_rules_file` の場所（`config.toml` の初期値は `priority_rules.md`）に配置してください。実データを含む `priority_rules.md` と旧 `priority_rules.toml` はGit管理対象外です。`config.example.toml` は公開用サンプルを参照します。実際の条件をサンプルへ書かないでください。
+
+```powershell
+# ルールだけを検証
+python validate_config.py priority_rules.md
+
+# ローカルの設定とルールを検証
+python validate_config.py
+
+# SharePoint取得前のCIで設定構造と公開用サンプルを検証
+python validate_config.py --structure-only
+```
+
 ## 判定結果の評価
 
 実行フォルダの `engineer_assessments.json` を確認し、人が確認した正解を `matching_labels.json` に記載してください。対象レコードの `engineer`・`uid`・`project_key` をそのままコピーし、`expected` に `match`（適合）・`mismatch`（不適合）・`unknown`（情報不足）のいずれかを指定します。
@@ -121,5 +140,5 @@ python evaluate_matching.py output/対象実行フォルダ/engineer_assessments
 - `engineers.md` と `スキルシート/` が全ブランチ・タグの履歴から削除済みであることを確認してください。履歴を書き換えた後は共同作業者も再cloneしてください。
 - 過去のActionsの `mail-report` Artifactと、個人名・案件情報を含むログを削除してください。今後のGHAではレポートのArtifact保存を行わず、分析ログも公開しません。レポートはSharePointで確認してください。
 - `.env`、実メール、出力レポート、スキルシートをコミットしないでください。`output/`、`.gha-report/`、`.gha-state/` はGit管理の対象外です。
-- `config.toml`、`priority_rules.toml`、テストやコメントに公開したくない社内条件・実データがないか確認してください。
+- 判定条件はSharePointの `priority_rules.md` で管理し、旧 `priority_rules.toml` がGit履歴に残っていないことを確認してください。`config.toml`、公開用サンプル、テストやコメントにも社内条件・実データを書かないでください。
 - `mail-checkpoint` Artifactは次回実行の復元に使用します。全実行履歴を削除する場合は、チェックポイントを退避して復元方法を整えてから削除してください。

@@ -48,8 +48,8 @@ class ConfigurationTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.path = self.root / 'config.toml'
         self.source = Path('config.example.toml').read_text(encoding='utf-8')
-        rules = (Path.cwd() / 'priority_rules.toml').as_posix()
-        self.source = self.source.replace('priority_rules_file = "priority_rules.toml"', f'priority_rules_file = "{rules}"')
+        rules = (Path.cwd() / 'priority_rules.example.md').as_posix()
+        self.source = self.source.replace('priority_rules_file = "priority_rules.example.md"', f'priority_rules_file = "{rules}"')
         self.path.write_text(self.source, encoding='utf-8')
 
     def load(self):

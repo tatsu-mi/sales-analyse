@@ -5,6 +5,7 @@ on:
     paths:
       - 'requirements.txt'
       - '**/*.toml'
+      - 'priority_rules.example.md'
       - '*.py'
       - 'tests/**'
       - '.github/workflows/validate-config.yml'
@@ -12,6 +13,7 @@ on:
     paths:
       - 'requirements.txt'
       - '**/*.toml'
+      - 'priority_rules.example.md'
       - '*.py'
       - 'tests/**'
       - '.github/workflows/validate-config.yml'
@@ -35,6 +37,6 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Validate TOML without credentials or network calls
-        run: python validate_config.py
+        run: python validate_config.py --structure-only
       - name: Run offline tests
         run: python -m unittest discover -s tests -q

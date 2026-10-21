@@ -13,7 +13,7 @@ import prioritization as priority
 
 class PriorityTests(unittest.TestCase):
     def setUp(self):
-        self.rules = priority.load_rules("priority_rules.toml")
+        self.rules = priority.load_rules("priority_rules.example.md")
 
     def candidate(self, uid, kind="ses", states=None, received="2026-10-15T12:00:00+09:00"):
         states = states or ["match"] * len(self.rules[kind]["criteria"])
@@ -131,8 +131,11 @@ class PriorityTests(unittest.TestCase):
 
     def test_rules_validation_rejects_invalid_limits_and_empty_criteria(self):
         with tempfile.TemporaryDirectory() as temp:
-            source = Path(temp) / "rules.toml"
-            for text in ('top_n = 11', 'top_n = true', 'top_n = 10\n[ses]\ncriteria = []'):
+            source = Path(temp) / "rules.md"
+            valid = Path('priority_rules.example.md').read_text(encoding='utf-8')
+            for text in (valid.replace('## 表示件数\n\n10', '## 表示件数\n\n11'),
+                         valid.replace('## 表示件数\n\n10', '## 表示件数\n\ntrue'),
+                         '## 表示件数\n10\n## SES: SES案件\n'):
                 source.write_text(text, encoding="utf-8")
                 with self.assertRaises(ValueError):
                     priority.load_rules(source)

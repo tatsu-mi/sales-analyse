@@ -126,7 +126,7 @@ class ProfileTests(unittest.TestCase):
                 matching.validate(json.dumps({'records': [record]}), [{'id': '0'}])
 
     def test_confirmed_engineer_matches_outrank_unknown_and_keep_confirmation_action(self):
-        rules = prioritization.load_rules('priority_rules.toml')
+        rules = prioritization.load_rules('priority_rules.example.md')
         from test_prioritization import PriorityTests
         factory = PriorityTests()
         factory.rules = rules

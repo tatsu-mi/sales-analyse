@@ -62,8 +62,8 @@ class MailTests(unittest.TestCase):
 
     def test_logging_config_validation_and_default(self):
         source = Path("config.example.toml").read_text(encoding="utf-8").replace(
-            'priority_rules_file = "priority_rules.toml"',
-            'priority_rules_file = "' + Path("priority_rules.toml").resolve().as_posix() + '"')
+            'priority_rules_file = "priority_rules.example.md"',
+            'priority_rules_file = "' + Path("priority_rules.example.md").resolve().as_posix() + '"')
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config.toml"
             for enabled in ("true", "false"):

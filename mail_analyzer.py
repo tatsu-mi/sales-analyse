@@ -101,7 +101,7 @@ def positive(section, key, default):
     return value
 
 
-def load_config(path, *, load_environment=True):
+def load_config(path, *, load_environment=True, load_priority_rules=True):
     path = Path(path)
     try:
         with path.open("rb") as file:
@@ -165,16 +165,18 @@ def load_config(path, *, load_environment=True):
         directory = Path(directory)
         analysis["engineers_file"] = str(directory if directory.is_absolute() else path.resolve().parent / directory)
     analysis["lookback_hours"] = positive(analysis, "lookback_hours", 24)
-    rules_path = analysis.get("priority_rules_file", "priority_rules.toml")
+    rules_path = analysis.get("priority_rules_file", "priority_rules.md")
     if not isinstance(rules_path, str) or not rules_path.strip():
         raise ToolError("analysis.priority_rules_file に設定ファイルを指定してください。")
     rules_path = Path(rules_path)
     if not rules_path.is_absolute():
         rules_path = path.resolve().parent / rules_path
-    try:
-        config["priority_rules"] = analysis_pipeline.prioritization.load_rules(rules_path)
-    except (OSError, ValueError, tomllib.TOMLDecodeError):
-        raise ToolError(f"判定設定を読めません。{rules_path} の内容を確認してください。") from None
+    analysis["priority_rules_file"] = str(rules_path)
+    if load_priority_rules:
+        try:
+            config["priority_rules"] = analysis_pipeline.prioritization.load_rules(rules_path)
+        except (OSError, ValueError):
+            raise ToolError(f"判定設定を読めません。{rules_path} の内容を確認してください。") from None
     for key in ("instructions", "output_dir"):
         if not isinstance(analysis.get(key), str) or not analysis[key].strip():
             raise ToolError(f"analysis.{key} を設定してください。")

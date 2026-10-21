@@ -1,5 +1,4 @@
 """Evidence-based assessments and deterministic, per-mail shortlists."""
-import tomllib
 import re
 import title_filter
 from pathlib import Path
@@ -9,8 +8,85 @@ STATES = ("match", "mismatch", "unknown")
 
 
 def load_rules(path):
-    with Path(path).open("rb") as file:
-        rules = tomllib.load(file)
+    path = Path(path)
+    if path.suffix.lower() != '.md':
+        raise ValueError('判定条件はMarkdown（.md）で指定してください。')
+    rules = parse_markdown_rules(path.read_text(encoding='utf-8-sig'))
+    return validate_rules(rules)
+
+
+def parse_markdown_rules(text):
+    """Read explicit Markdown sections without interpreting rules through an AI."""
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
+    sections, labels, current = {}, {}, None
+    names = {'表示件数': 'top_n', '件名選別': 'prefilter',
+             '優先して残す件名': 'keep_patterns', '除外する件名': 'exclude_patterns',
+             '件名選別への指示': 'ai_instructions'}
+    for line in text.splitlines():
+        if line.startswith('## '):
+            heading = line[3:].strip()
+            match = re.fullmatch(r'(SES|受託)[:：]\s*(.+)', heading)
+            if match:
+                current = 'ses' if match[1] == 'SES' else 'contract'
+                labels[current] = match[2].strip()
+            else:
+                current = names.get(heading)
+            if current is None or current in sections:
+                raise ValueError('判定条件の見出しに未対応の名前または重複があります。')
+            sections[current] = []
+        elif line.startswith('#') and not (current is None and line.startswith('# ')):
+            raise ValueError('判定条件の見出しは ## で指定してください。')
+        elif current is not None:
+            sections[current].append(line)
+    required = {'top_n', 'ses', 'contract', 'prefilter', 'keep_patterns',
+                'exclude_patterns', 'ai_instructions'}
+    if set(sections) != required:
+        raise ValueError('判定条件の必須見出しが不足しています。サンプルを確認してください。')
+
+    def bullets(key):
+        items = []
+        for line in sections[key]:
+            if not line.strip():
+                continue
+            if line.startswith('- ') and line[2:].strip():
+                items.append(line[2:].strip())
+            elif line.startswith('  ') and items and key in KINDS:
+                items[-1] += ' ' + line.strip()
+            else:
+                raise ValueError('条件・件名パターン・件名選別設定は - で始まる箇条書きにしてください。')
+        return items
+
+    limit = '\n'.join(sections['top_n']).strip()
+    if not re.fullmatch(r'[0-9]+', limit):
+        raise ValueError('表示件数は1以上10以下の整数で指定してください。')
+    settings, seen = {}, set()
+    setting_names = {'機械選別': 'enabled', 'AI選別': 'ai_enabled', '一括処理件数': 'batch_size'}
+    for item in bullets('prefilter'):
+        match = re.fullmatch(r'([^:：]+)[:：]\s*(.+)', item)
+        key = setting_names.get(match[1].strip()) if match else None
+        if key is None or key in seen:
+            raise ValueError('件名選別の設定名に未対応の名前または重複があります。')
+        seen.add(key)
+        value = match[2].strip()
+        if key == 'batch_size':
+            if not re.fullmatch(r'[0-9]+', value):
+                raise ValueError('一括処理件数は1以上100以下の整数で指定してください。')
+            settings[key] = int(value)
+        else:
+            if value not in ('有効', '無効'):
+                raise ValueError('機械選別・AI選別は有効または無効で指定してください。')
+            settings[key] = value == '有効'
+    if seen != set(setting_names.values()):
+        raise ValueError('件名選別の設定が不足しています。')
+    for key in ('keep_patterns', 'exclude_patterns'):
+        settings[key] = [item[1:-1] if item.startswith('`') and item.endswith('`') else item
+                         for item in bullets(key)]
+    settings['ai_instructions'] = '\n'.join(sections['ai_instructions']).strip()
+    return dict(top_n=int(limit), prefilter=settings,
+                **{kind: dict(label=labels[kind], criteria=bullets(kind)) for kind in KINDS})
+
+
+def validate_rules(rules):
     if set(rules) - {"top_n", "prefilter", "ses", "contract"}:
         raise ValueError("判定条件に未対応のセクション・設定名があります。")
     if type(rules.get("top_n")) is not int or not 1 <= rules["top_n"] <= 10:
@@ -124,7 +200,7 @@ def render_report(ranked, rules):
              "適合条件数、募集中の明記、受信日時の新しさの順で選定します。不明条件は要確認として順位を下げます。",
              "同じメールに複数案件がある場合は、カテゴリごとに最も適合する案件で代表します。", ""]
     if "ses_by_engineer" in ranked:
-        lines += ["priority_rules.tomlのSES条件は全エンジニアに共通で適用し、engineers.mdの各人のスキル・通勤条件を追加判定します。", ""]
+        lines += ["priority_rules.mdのSES条件は全エンジニアに共通で適用し、engineers.mdの各人のスキル・通勤条件を追加判定します。", ""]
         lines += ["必須条件・共通条件・通勤条件を全て確認できた案件だけを適合確認済みとします。要確認は別枠で表示し、適合確認済みの件数を埋めるためには使いません。同じ案件が複数エンジニアの候補に入る場合があります。", ""]
         lines += ["勤務地は最寄り駅から片道90分以内、または出社不要のフルリモートを必須とします。通勤時間が確認できない案件は要確認です。", ""]
     for label, entries in report_sections(ranked, rules):

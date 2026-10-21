@@ -8,7 +8,7 @@ import title_filter
 
 class TitleFilterTests(unittest.TestCase):
     def setUp(self):
-        self.settings = prioritization.load_rules('priority_rules.toml')['prefilter']
+        self.settings = prioritization.load_rules('priority_rules.example.md')['prefilter']
 
     def test_mechanical_rules(self):
         excluded = ['【人材紹介】Pythonエンジニア', '弊社社員紹介', '社員の紹介', 'エンジニアのご紹介', '新年のご挨拶',

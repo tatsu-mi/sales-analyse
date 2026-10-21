@@ -26,7 +26,7 @@ def opportunity(budget="70万円/月", deadline="", status="open", project_id="P
                  deadline_iso=deadline, status=status, skills=["Python"], notes=notes, kind="ses",
                  mandatory_requirements=[dict(requirement='Python実務', category='skill', source_quote='Python')],
                  assessments=[{"criterion": i, "state": "unknown", "evidence": ""}
-                              for i in range(1, len(pipeline.prioritization.load_rules('priority_rules.toml')['ses']['criteria']) + 1)])
+                              for i in range(1, len(pipeline.prioritization.load_rules('priority_rules.example.md')['ses']['criteria']) + 1)])
     return value
 
 
@@ -516,8 +516,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([value["uid"] for value in result["ses"]], ["1"])
         self.assertEqual([value["uid"] for value in result["contract"]], ["1"])
         self.assertEqual(result["contract"][0]["verification"], "適合")
-        self.assertIn("SES派遣の要員募集", report)
-        self.assertIn("受託案件としてアプローチできそうな案件", report)
+        self.assertIn(self.config['priority_rules']['ses']['label'], report)
+        self.assertIn(self.config['priority_rules']['contract']['label'], report)
 
     def test_changed_rule_reextracts_instead_of_reusing_old_assessments(self):
         self.make([mail(1)]).run()

@@ -60,7 +60,7 @@ jobs:
         run: python -m unittest discover -s tests -q
 
       - name: Validate TOML without credentials
-        run: python validate_config.py
+        run: python validate_config.py --structure-only
 
       - name: Validate SharePoint settings
         env:
@@ -115,39 +115,47 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
 
-      - name: Download engineer profiles from SharePoint
+      - name: Download private settings from SharePoint
         env:
           DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
           FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
         shell: bash
         run: |
           set -euo pipefail
-          # Always download a fresh copy. Do not print profiles or Graph errors.
-          rm -f engineers.md
-          if ! az rest --method GET \
-            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/engineers.md:/content" \
-            --resource "https://graph.microsoft.com/" \
-            --output-file "$RUNNER_TEMP/engineers.md" \
-            --output none > "$RUNNER_TEMP/engineers-download.log" 2>&1; then
-            echo '::error::Could not download engineers.md from the report folder in SharePoint.'
-            exit 1
-          fi
+          # Download both files on every run; never print content or Graph errors.
+          for filename in engineers.md priority_rules.md; do
+            rm -f "$RUNNER_TEMP/$filename"
+            if ! az rest --method GET \
+              --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/${filename}:/content" \
+              --resource "https://graph.microsoft.com/" \
+              --output-file "$RUNNER_TEMP/$filename" \
+              --output none > "$RUNNER_TEMP/${filename}-download.log" 2>&1; then
+              echo "::error::Could not download $filename from the report folder in SharePoint."
+              exit 1
+            fi
+          done
           python - <<'PY'
           import os
           import shutil
           from pathlib import Path
           import engineer_matching
           import mail_analyzer
+          import prioritization
 
-          source = Path(os.environ['RUNNER_TEMP']) / 'engineers.md'
           try:
-              engineer_matching.load_profiles(source)
-              config = mail_analyzer.load_config(Path('config.toml'), load_environment=False)
-              destination = Path(config['analysis']['engineers_file'])
-              destination.parent.mkdir(parents=True, exist_ok=True)
-              shutil.copyfile(source, destination)
+              source = Path(os.environ['RUNNER_TEMP'])
+              engineer_matching.load_profiles(source / 'engineers.md')
+              prioritization.load_rules(source / 'priority_rules.md')
+              config = mail_analyzer.load_config(Path('config.toml'), load_environment=False,
+                                                 load_priority_rules=False)
+              for filename, key in [('engineers.md', 'engineers_file'),
+                                    ('priority_rules.md', 'priority_rules_file')]:
+                  destination = Path(config['analysis'][key])
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source / filename, destination)
+              mail_analyzer.load_config(Path('config.toml'), load_environment=False)
           except (OSError, ValueError, mail_analyzer.ToolError):
-              raise SystemExit('engineers.mdの取得・UTF-8形式・プロフィールの見出しを確認してください。') from None
+              raise SystemExit('engineers.md・priority_rules.mdの取得・UTF-8形式・見出しを確認してください。') from None
           PY
 
       - name: Analyze and prepare report

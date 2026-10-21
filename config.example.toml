@@ -31,7 +31,7 @@ engineers_file = "engineers.md"
 # 期間指定なしは前回正常完了の実施時刻以降。記録のない初回のみ直近24時間。
 lookback_hours = 24
 # 判定条件は別ファイルで管理。相対パスはこの設定ファイルの場所が基準。
-priority_rules_file = "priority_rules.toml"
+priority_rules_file = "priority_rules.example.md"
 # --start / --end を両方指定すると、指定日付の全日を対象にします。
 # start_date = "2026-10-01"
 # end_date = "2026-10-15"

@@ -7,6 +7,8 @@ config.*.local.toml
 # Private engineer profiles and source documents
 engineers.md
 スキルシート/
+priority_rules.md
+priority_rules.toml
 
 # Generated mail data and analysis reports
 output/

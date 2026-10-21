@@ -174,8 +174,8 @@ class ScheduledRunTests(unittest.TestCase):
         (self.root / 'engineers.md').write_text('## A\n\nPython', encoding='utf-8')
         self.config_path = self.root / 'config.toml'
         config = Path('config.toml').read_text(encoding='utf-8')
-        rules = (Path.cwd() / 'priority_rules.toml').as_posix()
-        config = config.replace('priority_rules_file = "priority_rules.toml"', f'priority_rules_file = "{rules}"')
+        rules = (Path.cwd() / 'priority_rules.example.md').as_posix()
+        config = config.replace('priority_rules_file = "priority_rules.md"', f'priority_rules_file = "{rules}"')
         self.config_path.write_text(config, encoding='utf-8')
         self.checkpoint_dir = self.root / 'state'
         self.publish_dir = self.root / 'publish'
