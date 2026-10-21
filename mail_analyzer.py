@@ -27,6 +27,7 @@ from uuid import uuid4
 
 import analysis_pipeline
 import environment
+import run_progress
 
 JST = timezone(timedelta(hours=9))
 LOGGER = logging.getLogger("mail_analyzer")
@@ -298,13 +299,17 @@ def iter_fetch_mails(config, start, stop):
             progress("フォルダ選択")
             checked(client.select(folder, readonly=True), "フォルダ選択")
             progress("期間検索")
+            run_progress.report('mail_search')
             result = checked(client.uid("search", None, "SINCE", since, "BEFORE", before), "期間検索")
             LOGGER.info("IMAP 検索結果=%s件", len((result[0] or b"").split()))
             # Higher UIDs are newer arrivals in this mailbox; SEARCH order is unspecified.
-            for uid in sorted((result[0] or b"").split(), key=int, reverse=True):
+            candidates = sorted((result[0] or b"").split(), key=int, reverse=True)
+            for index, uid in enumerate(candidates, 1):
                 if count >= limits["max_emails"]:
                     LOGGER.info("IMAP 取得上限 max_emails=%s に達したため取得を終了します。", count)
                     break
+                if index == 1 or index % 25 == 0:
+                    run_progress.report('mail_scan', done=index, total=len(candidates), fetched=count)
                 progress("日時・サイズ取得", uid.decode("ascii", errors="replace"))
                 data = checked(client.uid("fetch", uid, "(INTERNALDATE RFC822.SIZE)"), "日時取得")
                 metadata = b" ".join(item for item in data if isinstance(item, bytes))
@@ -443,6 +448,7 @@ def json_api_request(settings, api_key, url, payload=None, before_request=None, 
             if ((error.code == 429 or 500 <= error.code < 600) and attempt < settings["retries"]
                     and not info["quota_blocked"]
                     and info["retry_seconds"] <= settings.get("retry_max_wait_seconds", 120)):
+                run_progress.report('waiting', seconds=int(delay + 0.999))
                 LOGGER.warning("Gemini HTTP %s: %.1f秒待機して再試行 (%s/%s)。%s",
                                error.code, delay, attempt + 1, settings["retries"], quota_details)
                 remaining = delay
@@ -792,6 +798,7 @@ def run(args):
         start, stop = saved_period(metadata)
         source = output / "emails.jsonl"
         validate_saved_mails(source, metadata, analysis["max_emails"])
+        run_progress.report('mails_reused')
         if metadata.get("dataset_key") != dataset_key(config, start, stop):
             raise ToolError("保存済み実行とメールボックス・取得条件が異なります。")
         return finish_analysis(config, api_key, source, output, metadata, None, stop, args)
@@ -821,6 +828,7 @@ def run(args):
     if saved:
         source, source_metadata = saved
         validate_saved_mails(source, source_metadata, analysis["max_emails"])
+        run_progress.report('mails_reused')
         print("保存済みメールを使用します。メールの再取得は行いません。", flush=True)
     output = root / (datetime.now(JST).strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8])
     output.mkdir(parents=True, exist_ok=False)
@@ -838,6 +846,7 @@ def run(args):
     try:
         records = iter_saved_mails(saved[0]) if saved else iter_fetch_mails(config, start, stop)
         if not saved:
+            run_progress.report('fetching')
             print("IMAPから対象メールを取得し、順次ファイルに保存しています...", flush=True)
         with partial.open("w", encoding="utf-8") as file:
             for mail in records:
@@ -845,6 +854,8 @@ def run(args):
                 file.flush()
                 metadata["count"] += 1
                 metadata["truncated_bodies"] += mail["body_truncated"]
+                if metadata['count'] == 1 or metadata['count'] % 25 == 0:
+                    run_progress.report('fetched_count', count=metadata['count'])
         if saved:
             if metadata["count"] != saved[1]["count"] or metadata["truncated_bodies"] != saved[1]["truncated_bodies"]:
                 raise ToolError("読み込み中に保存メールが変更されました。")
@@ -860,6 +871,7 @@ def run(args):
         raise
     write_json(output / "metadata.json", metadata)
     progress = getattr(args, "progress", None)
+    run_progress.report('fetch_complete', count=metadata['count'])
     if progress:
         progress(output, "fetched")
     return finish_analysis(config, api_key, source, output, metadata, state_path, stop, args)

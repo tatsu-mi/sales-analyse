@@ -131,7 +131,8 @@ jobs:
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         shell: bash
         run: |
-          if ! python sharepoint_run.py > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
+          # Descriptor 3 streams fixed progress messages; detailed output stays private.
+          if ! python sharepoint_run.py --progress-fd 3 3>&1 > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
             echo "::error::Run failed. Resume with run ID ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}."
             exit 1
           fi

@@ -4,6 +4,7 @@ from __future__ import annotations
 import prioritization
 import title_filter
 import engineer_matching
+import run_progress
 import hashlib
 import json
 import sqlite3
@@ -99,6 +100,7 @@ class RateLimiter:
                 self.input_tokens += tokens
                 return
             wait = max(0.1, self.events[0][0] + 60.1 - now)
+            run_progress.report('waiting', seconds=int(wait + 0.999))
             print(f"Geminiの利用制限に合わせて待機中（あと約{wait:.0f}秒）。処理は継続します。", flush=True)
             self.sleep(min(wait, 30))
 
@@ -211,6 +213,7 @@ class Pipeline:
         done = self.metadata["extracted_unique_count"] + skipped
         total = self.metadata.get("analysis_target_count", self.metadata["unique_email_count"])
         percent = 100 * done / total if total else 100
+        run_progress.report('extracting', done=done, total=total, skipped=skipped)
         print(f"メール分析：{done:,} / {total:,}通完了（{percent:.1f}%・スキップ{skipped:,}通）｜{detail}", flush=True)
 
     def request_progress(self, items, schema, cached=False):
@@ -341,11 +344,13 @@ class Pipeline:
     def screen_titles(self, connection):
         saved = read_cache(self.output / "title_selection.json")
         if saved:
+            run_progress.report('titles_reused')
             connection.execute("CREATE TABLE selected (uid TEXT PRIMARY KEY)")
             with connection:
                 connection.executemany("INSERT INTO selected VALUES (?)", [(uid,) for uid in saved["uids"]])
             self.metadata.update(saved["counts"])
             return
+        run_progress.report('titles_start')
         settings = self.rules.get("prefilter", {})
         connection.execute("CREATE TABLE selected (uid TEXT PRIMARY KEY)")
         counts = {"mechanical_excluded_count": 0, "ai_excluded_count": 0, "analysis_target_count": 0}
@@ -366,6 +371,8 @@ class Pipeline:
                 else:
                     connection.execute("INSERT INTO selected VALUES (?)", (decision["uid"],))
                     counts["analysis_target_count"] += 1
+            run_progress.report('titles_progress',
+                                done=sum(counts.values()), total=self.metadata['unique_email_count'])
 
         with connection:
             for uid, data in connection.execute("SELECT uid, mail FROM mails ORDER BY received, uid"):
@@ -388,6 +395,7 @@ class Pipeline:
                 (MAX_ANALYSIS_EMAILS,))
             counts["analysis_target_count"] -= counts["limit_excluded_count"]
         self.metadata.update(counts)
+        run_progress.report('titles_complete', count=counts['analysis_target_count'])
         atomic_json(self.output / "title_selection.json", {
             "uids": [row[0] for row in connection.execute("SELECT uid FROM selected ORDER BY uid")],
             "counts": counts})
@@ -578,6 +586,7 @@ class Pipeline:
         if self.profiles is not None:
             ranked["ses"] = []
             ranked["ses_by_engineer"] = self.rank_engineers(values)
+        run_progress.report('reporting')
         selected = {entry["uid"] for _, items in prioritization.report_sections(ranked, self.rules) for entry in items}
         originals = {}
         for mail in self.api.iter_saved_mails(self.source):
@@ -639,13 +648,15 @@ class Pipeline:
                   "project": {key: value["latest"][key] for key in fields},
                   "source_truncated": value.get('body_truncated', False)}
                  for i, value in enumerate(candidates)]
-        for profile in self.profiles:
+        for profile_index, profile in enumerate(self.profiles, 1):
             profile_path = self.output / "engineers" / (digest(profile['file']) + '.json')
             saved = read_cache(profile_path)
             if saved:
+                run_progress.report('engineer_reused', index=profile_index, total=len(self.profiles))
                 result.append(saved['group'])
                 audit.extend(saved['audit'])
                 continue
+            run_progress.report('engineer_start', index=profile_index, total=len(self.profiles), count=len(candidates))
             audit_start = len(audit)
             print(f"エンジニア別の案件照合: {profile['file']} / {len(candidates)}案件", flush=True)
             prompt = (
@@ -711,6 +722,7 @@ class Pipeline:
             atomic_json(profile_path, {'group': result[-1], 'audit': audit[audit_start:]})
             self.api.write_json(self.output / 'engineer_assessments.json', audit)
             self.checkpoint("engineer_completed")
+            run_progress.report('engineer_complete', index=profile_index, total=len(self.profiles))
         self.api.write_json(self.output / 'engineer_assessments.json', audit)
         return result
 

@@ -17,6 +17,7 @@ import zipfile
 import mail_analyzer as app
 import scheduled_run
 import sharepoint_reports
+import run_progress
 
 
 class Store:
@@ -97,6 +98,7 @@ def execute(store, work, run_id, resume=False):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', run_id):
         raise ValueError('Invalid run ID')
     remote = 'temporary-runs/' + run_id
+    run_progress.report('restoring' if resume else 'starting')
     checkpoint = store.get_json('run-state/checkpoint.json', missing=True)
     if resume:
         manifest = store.get_json(remote + '/progress.json')
@@ -128,6 +130,7 @@ def execute(store, work, run_id, resume=False):
         app.analysis_pipeline.atomic_json(state_dir / 'checkpoint.json', checkpoint)
 
     def save(output, stage):
+        run_progress.report('saving')
         if output is not None:
             manifest['output'] = output.relative_to(work).as_posix()
             metadata = app.read_metadata(output / 'metadata.json')
@@ -143,6 +146,7 @@ def execute(store, work, run_id, resume=False):
             store.put(remote + '/' + archive_name, archive_path.read_bytes())
             manifest['archive'] = archive_name
             store.put(remote + '/progress.json', app.analysis_pipeline.encoded(manifest).encode('utf-8'))
+            run_progress.report('saved')
         finally:
             archive_path.unlink(missing_ok=True)
 
@@ -163,6 +167,7 @@ def execute(store, work, run_id, resume=False):
                               run_period=run_period)
         save(output, 'prepared')
     if manifest['status'] == 'prepared':
+        run_progress.report('publishing')
         sharepoint_reports.ensure_reports_folder(os.environ['DRIVE_ID'], os.environ['FOLDER_ID'])
         # Use the same authenticated binary transfer for reports.
         item = store.put('reports/report-' + run_id + '.md', (publish / 'report.md').read_bytes())
@@ -170,18 +175,24 @@ def execute(store, work, run_id, resume=False):
         scheduled_run.validate_report_url(manifest['report_url'])
         save(output, 'report_uploaded')
     if manifest['status'] == 'report_uploaded':
+        run_progress.report('notifying')
         scheduled_run.notify(config, state_dir, publish, manifest['report_url'], link_only=True)
         save(output, 'notified')
+    run_progress.report('committing')
     store.folder('', 'run-state')
     store.put('run-state/checkpoint.json', (state_dir / 'checkpoint.json').read_bytes())
     save(output, 'complete')
+    run_progress.report('complete')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--resume', metavar='RUN_ID')
+    parser.add_argument('--progress-fd', type=int, help='File descriptor for public numeric progress')
     args = parser.parse_args()
     try:
+        if args.progress_fd is not None:
+            run_progress.stream = os.fdopen(os.dup(args.progress_fd), 'w', encoding='utf-8')
         store = Store()
         work = Path('.gha-state/run').resolve()
         work.mkdir(parents=True, exist_ok=False)
@@ -191,6 +202,10 @@ def main():
     except (app.ToolError, OSError, ValueError, KeyError, subprocess.CalledProcessError, zipfile.BadZipFile):
         print('SharePoint run failed. Resume using the saved run ID after checking settings and services.', file=sys.stderr)
         return 1
+    finally:
+        if args.progress_fd is not None and run_progress.stream is not None:
+            run_progress.stream.close()
+            run_progress.stream = None
 
 
 if __name__ == '__main__':

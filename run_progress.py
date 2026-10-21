@@ -1,0 +1,38 @@
+"""Public progress contains fixed messages and numeric counts only."""
+
+stream = None
+
+MESSAGES = {
+    'starting': '実行条件と保存先を準備しています。',
+    'restoring': 'SharePointから前回の処理状況を復元しています。',
+    'fetching': 'メール取得中です。',
+    'mail_search': '取得対象のメールを検索しています。',
+    'mail_scan': 'メール確認中：{done:,} / {total:,}件（取得済み {fetched:,}通）',
+    'fetched_count': 'メール取得中：{count:,}通を保存しました。',
+    'fetch_complete': 'メール取得完了：{count:,}通。',
+    'mails_reused': '保存済みメールを使用します。',
+    'titles_start': 'タイトル絞り込み中です。',
+    'titles_reused': '保存済みのタイトル絞り込み結果を使用します。',
+    'titles_progress': 'タイトル絞り込み：{done:,} / {total:,}通確認済み。',
+    'titles_complete': 'タイトル絞り込み完了：本文分析の対象は{count:,}通です。',
+    'extracting': 'メール分析：{done:,} / {total:,}通完了（スキップ {skipped:,}通）。',
+    'engineer_start': '人物ごとの案件照合：{index:,} / {total:,}人目（{count:,}案件）。',
+    'engineer_reused': '人物ごとの案件照合：{index:,} / {total:,}人目は保存済みです。',
+    'engineer_complete': '人物ごとの案件照合：{index:,} / {total:,}人完了。',
+    'reporting': '照合結果をまとめてレポートを作成しています。',
+    'saving': 'SharePointへ処理状況を一時保存しています。',
+    'saved': 'SharePointへの一時保存が完了しました。',
+    'publishing': 'SharePointへレポートを保存しています。',
+    'notifying': 'Teamsへレポートのリンクを通知しています。',
+    'committing': 'SharePointの前回実行時間を更新しています。',
+    'waiting': 'APIの利用制限に合わせて約{seconds:,}秒待機します。',
+    'complete': 'レポートの保存・通知と前回実行時間の更新が完了しました。',
+}
+
+
+def report(event, **counts):
+    if stream is None:
+        return
+    if any(type(value) is not int or value < 0 for value in counts.values()):
+        raise ValueError('Progress accepts nonnegative integer counts only')
+    print('[進捗] ' + MESSAGES[event].format(**counts), file=stream, flush=True)

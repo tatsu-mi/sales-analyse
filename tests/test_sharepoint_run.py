@@ -1,4 +1,5 @@
 import copy
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -7,6 +8,7 @@ from unittest.mock import patch
 
 import mail_analyzer as app
 import sharepoint_run as runner
+import run_progress
 
 snapshot_settings = runner.snapshot_settings
 
@@ -115,10 +117,16 @@ class SharePointRunTests(unittest.TestCase):
 
     def test_resume_after_fetch_failure_of_analysis_uses_original_period_and_mail(self):
         mail = {'uid': '1', 'body': 'Python', 'body_truncated': False}
+        public = io.StringIO()
         with patch.object(app, 'iter_fetch_mails', return_value=iter([mail])), \
+                patch.object(run_progress, 'stream', public), \
                 patch.object(app.analysis_pipeline, 'Pipeline', side_effect=app.ToolError('analysis failed')):
             with self.assertRaisesRegex(app.ToolError, 'analysis failed'):
                 self.execute('first')
+        self.assertIn('メール取得中', public.getvalue())
+        self.assertIn('メール取得完了：1通', public.getvalue())
+        self.assertIn('SharePointへの一時保存が完了', public.getvalue())
+        self.assertNotIn('Python', public.getvalue())
         manifest = self.store.get_json('temporary-runs/123-1/progress.json')
         self.assertEqual(manifest['status'], 'fetched')
         original = copy.deepcopy(manifest)
