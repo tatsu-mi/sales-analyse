@@ -39,8 +39,11 @@ class ProfileTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 matching.load_profiles(path)
 
-    def test_actual_engineer_list_has_16_distinct_people(self):
-        profiles = matching.load_profiles('engineers.md')
+    def test_many_profiles_have_distinct_people(self):
+        path = self.root / 'engineers.md'
+        path.write_text('\n'.join(f'## Person {i}\nPython実務3年\n' for i in range(16)),
+                        encoding='utf-8')
+        profiles = matching.load_profiles(path)
         self.assertEqual(len(profiles), 16)
         self.assertEqual(len({p['file'] for p in profiles}), 16)
 

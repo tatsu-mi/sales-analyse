@@ -108,6 +108,48 @@ jobs:
             echo 'First successful delivery: use analysis.lookback_hours from TOML.'
           fi
 
+      - name: Authenticate to Microsoft 365
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Download engineer profiles from SharePoint
+        env:
+          DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
+          FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Always download a fresh copy. Do not print profiles or Graph errors.
+          rm -f engineers.md
+          if ! az rest --method GET \
+            --url "https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${FOLDER_ID}:/engineers.md:/content" \
+            --resource "https://graph.microsoft.com/" \
+            --output-file "$RUNNER_TEMP/engineers.md" \
+            --output none > "$RUNNER_TEMP/engineers-download.log" 2>&1; then
+            echo '::error::Could not download engineers.md from the report folder in SharePoint.'
+            exit 1
+          fi
+          python - <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
+          import engineer_matching
+          import mail_analyzer
+
+          source = Path(os.environ['RUNNER_TEMP']) / 'engineers.md'
+          try:
+              engineer_matching.load_profiles(source)
+              config = mail_analyzer.load_config(Path('config.toml'), load_environment=False)
+              destination = Path(config['analysis']['engineers_file'])
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source, destination)
+          except (OSError, ValueError, mail_analyzer.ToolError):
+              raise SystemExit('engineers.mdの取得・UTF-8形式・プロフィールの見出しを確認してください。') from None
+          PY
+
       - name: Analyze and prepare report
         env:
           SAKURA_MAIL_HOST: ${{ secrets.SAKURA_MAIL_HOST }}
@@ -115,23 +157,14 @@ jobs:
           SAKURA_MAIL_PASSWORD: ${{ secrets.SAKURA_MAIL_PASSWORD }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-        run: python scheduled_run.py --config config.toml --prepare-only
-
-      - name: Save report files
-        uses: actions/upload-artifact@v7
-        with:
-          name: mail-report
-          path: .gha-report/*
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Authenticate to Microsoft 365
-        uses: azure/login@v3
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          allow-no-subscriptions: true
+        shell: bash
+        run: |
+          # Analysis output can contain names, project details and API responses.
+          # Keep it on the runner; never publish it as a log or artifact.
+          if ! python scheduled_run.py --config config.toml --prepare-only > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
+            echo '::error::Report preparation failed. Check configuration and external service availability.'
+            exit 1
+          fi
 
       - name: Upload report to SharePoint
         id: sharepoint-report

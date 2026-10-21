@@ -4,6 +4,10 @@ config.*.local.toml
 .env.*
 !.env.example
 
+# Private engineer profiles and source documents
+engineers.md
+スキルシート/
+
 # Generated mail data and analysis reports
 output/
 .gha-state/
