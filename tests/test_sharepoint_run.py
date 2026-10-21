@@ -1,4 +1,5 @@
 import copy
+import contextlib
 import io
 import json
 from pathlib import Path
@@ -183,6 +184,53 @@ class SharePointRunTests(unittest.TestCase):
             self.execute('resumed', resume=True)
         self.assertEqual([value.isoformat() for value in fetch.call_args.args[1:]],
                          [period['start_at'], period['stop_at']])
+
+    def test_cli_saves_error_history_redacts_credentials_and_preserves_resume_state(self):
+        log = self.root / 'mail-analysis.log'
+        log.write_text('mail fetch completed\nprivate-password private-key\n'
+                       'https://example.invalid/download?sig=secret-signature\n'
+                       'Authorization: Bearer unknown-access-token\n', encoding='utf-8')
+        resume_state = b'{"status":"fetched","archive":"snapshot-original.zip"}'
+        self.store.files['temporary-runs/123-1/progress.json'] = resume_state
+        public, details = io.StringIO(), io.StringIO()
+        for attempt in range(2):
+            with patch.object(runner.sys, 'argv', ['sharepoint_run.py', '--resume', '123-1', '--log-file', str(log)]), \
+                    patch.object(runner, 'Store', return_value=self.store), \
+                    patch.object(runner.Path, 'resolve', return_value=self.root / f'work-{attempt}'), \
+                    patch.object(runner, 'execute', side_effect=RuntimeError('analysis failed: private-key')), \
+                    patch.object(run_progress, 'stream', public), \
+                    contextlib.redirect_stdout(details), contextlib.redirect_stderr(details):
+                self.assertEqual(runner.main(), 1)
+        errors = {name: data for name, data in self.store.files.items() if '/error-' in name}
+        self.assertEqual(len(errors), 2)
+        for name, data in errors.items():
+            self.assertTrue(name.startswith('temporary-runs/123-1/error-'))
+            text = data.decode('utf-8')
+            self.assertIn('mail fetch completed', text)
+            self.assertIn('Traceback (most recent call last)', text)
+            self.assertIn('RuntimeError: analysis failed', text)
+            for secret in ('private-password', 'private-key', 'secret-signature', 'unknown-access-token'):
+                self.assertNotIn(secret, text)
+        self.assertEqual(self.store.files['temporary-runs/123-1/progress.json'], resume_state)
+        self.assertIn('詳細エラーログをSharePoint', public.getvalue())
+        self.assertNotIn('analysis failed', public.getvalue())
+
+    def test_error_upload_failure_returns_original_failure_and_keeps_local_diagnostics(self):
+        log = self.root / 'mail-analysis.log'
+        log.write_text('execution details', encoding='utf-8')
+        public, details = io.StringIO(), io.StringIO()
+        with patch.object(runner.sys, 'argv', ['sharepoint_run.py', '--resume', '123-1', '--log-file', str(log)]), \
+                patch.object(runner, 'Store', return_value=self.store), \
+                patch.object(runner.Path, 'resolve', return_value=self.root / 'work'), \
+                patch.object(runner, 'execute', side_effect=ValueError('original failure')), \
+                patch.object(self.store, 'put', side_effect=app.ToolError('SharePoint unavailable')), \
+                patch.object(run_progress, 'stream', public), \
+                contextlib.redirect_stdout(details), contextlib.redirect_stderr(details):
+            self.assertEqual(runner.main(), 1)
+        errors = list(self.root.glob('error-*.log'))
+        self.assertEqual(len(errors), 1)
+        self.assertIn('ValueError: original failure', errors[0].read_text(encoding='utf-8'))
+        self.assertIn('エラーログ保存にも失敗', public.getvalue())
 
 
 if __name__ == '__main__':

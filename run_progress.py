@@ -27,6 +27,8 @@ MESSAGES = {
     'committing': 'SharePointの前回実行時間を更新しています。',
     'waiting': 'APIの利用制限に合わせて約{seconds:,}秒待機します。',
     'complete': 'レポートの保存・通知と前回実行時間の更新が完了しました。',
+    'error_saved': '処理に失敗しました。詳細エラーログをSharePointの実行用一時フォルダへ保存しました。',
+    'error_save_failed': '処理に失敗しました。SharePointへのエラーログ保存にも失敗しました。',
 }
 
 

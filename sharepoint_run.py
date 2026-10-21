@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import traceback
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 import zipfile
@@ -42,7 +43,7 @@ class Store:
         except HTTPError as error:
             if missing and error.code == 404:
                 return None
-            raise app.ToolError('SharePoint state transfer failed.') from None
+            raise app.ToolError(f'SharePoint state transfer failed (HTTP {error.code}, {method}).') from error
 
     def folder(self, parent, name):
         base = self.base if not parent else self.base + ':/' + quote(parent, safe='/')
@@ -92,6 +93,60 @@ def restore_archive(raw, work):
                     or item.filename.startswith('/')):
                 raise ValueError('Invalid snapshot path')
         archive.extractall(work)
+
+
+def redact_credentials(text):
+    secrets = [value for name, value in os.environ.items() if value and (
+        name in {'SAKURA_MAIL_USERNAME', 'TEAMS_WEBHOOK_URL'}
+        or re.search(r'(?:PASSWORD|API_KEY|TOKEN|SECRET)$', name, re.IGNORECASE))]
+    for secret in sorted(secrets, key=len, reverse=True):
+        for value in (secret, repr(secret)[1:-1], json.dumps(secret, ensure_ascii=False)[1:-1]):
+            text = text.replace(value, '[REDACTED]')
+    text = re.sub(r'(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*', 'Bearer [REDACTED]', text)
+    text = re.sub(r'\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b', '[REDACTED JWT]', text)
+
+    def redact_url(match):
+        try:
+            url = urlsplit(match[0])
+            return urlunsplit((url.scheme, url.netloc.rsplit('@', 1)[-1], url.path,
+                               '[REDACTED]' if url.query else '', ''))
+        except ValueError:
+            return '[REDACTED URL]'
+
+    return re.sub(r'https?://[^\s<>"\']+', redact_url, text)
+
+
+def save_failure(store, run_id, error, log_file=None):
+    """Save diagnostics separately, leaving the last resumable snapshot untouched."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    timestamp = app.datetime.now(app.JST).strftime('%Y%m%d_%H%M%S')
+    filename = 'error-' + timestamp + '-' + uuid4().hex[:8] + '.log'
+    details = ''
+    if log_file is not None:
+        try:
+            details = log_file.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            details = 'The execution log could not be read.\n'
+    details += '\nFailed at: ' + app.datetime.now(app.JST).isoformat() + '\n'
+    details += ''.join(traceback.format_exception(error))
+    current, seen = error, set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, subprocess.CalledProcessError) and current.stderr:
+            stderr = current.stderr
+            details += '\nSubprocess stderr:\n' + (
+                stderr.decode('utf-8', errors='replace') if isinstance(stderr, bytes) else stderr)
+        current = current.__cause__ or current.__context__
+    payload = redact_credentials(details).encode('utf-8')
+    destination = (log_file.parent if log_file is not None else Path('.gha-state')) / filename
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(payload)
+    if store is None or not run_id or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', run_id):
+        raise ValueError('SharePoint is unavailable or the run ID is invalid')
+    store.folder('', 'temporary-runs')
+    store.folder('temporary-runs', run_id)
+    store.put('temporary-runs/' + run_id + '/' + filename, payload)
 
 
 def execute(store, work, run_id, resume=False):
@@ -189,17 +244,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--resume', metavar='RUN_ID')
     parser.add_argument('--progress-fd', type=int, help='File descriptor for public numeric progress')
+    parser.add_argument('--log-file', type=Path, help='Detailed execution log to preserve on failure')
     args = parser.parse_args()
+    store, run_id = None, None
     try:
         if args.progress_fd is not None:
             run_progress.stream = os.fdopen(os.dup(args.progress_fd), 'w', encoding='utf-8')
+        run_id = args.resume or (os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
         store = Store()
         work = Path('.gha-state/run').resolve()
         work.mkdir(parents=True, exist_ok=False)
-        run_id = args.resume or (os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
         execute(store, work, run_id, resume=bool(args.resume))
         return 0
-    except (app.ToolError, OSError, ValueError, KeyError, subprocess.CalledProcessError, zipfile.BadZipFile):
+    except Exception as error:
+        try:
+            save_failure(store, run_id, error, args.log_file)
+            run_progress.report('error_saved')
+        except Exception:
+            # A secondary upload error must never replace the original failure.
+            run_progress.report('error_save_failed')
         print('SharePoint run failed. Resume using the saved run ID after checking settings and services.', file=sys.stderr)
         return 1
     finally:

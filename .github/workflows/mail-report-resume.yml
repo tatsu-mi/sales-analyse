@@ -51,7 +51,7 @@ jobs:
         shell: bash
         run: |
           # Descriptor 3 streams fixed progress messages; detailed output stays private.
-          if ! python sharepoint_run.py --resume "$RESUME_RUN_ID" --progress-fd 3 3>&1 > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
+          if ! python sharepoint_run.py --resume "$RESUME_RUN_ID" --progress-fd 3 --log-file "$RUNNER_TEMP/mail-analysis.log" 3>&1 > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
             echo '::error::Resume failed. Check the saved run and service settings.'
             exit 1
           fi

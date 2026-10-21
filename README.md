@@ -49,6 +49,8 @@ Teamsのテスト投稿後は投稿先チャネルで表示を確認してくだ
 
 途中で失敗した場合は **Actions → Resume mail analysis → Run workflow** を開き、デフォルトブランチを選んで `run_id` に元の実行の `GitHub実行ID-試行回数`（例：`123456789-1`）を入力してください。通常ワークフローの失敗メッセージにもこのIDを表示します。再開が失敗した場合も同じIDを指定します。
 
+エラーの詳細は、SharePointの `temporary-runs/<run_id>/error-日時-識別子.log` を確認してください。失敗するたびに実行ログと例外の詳細を保存します。認証情報は伏せ字になります。SharePointへのログ保存自体が失敗した場合はActionsの進捗欄に表示します。
+
 保存先の `temporary-runs/<run_id>/` にある `progress.json` とスナップショットを残してください。実行時の `config.toml`、`engineers.md`、`priority_rules.md` も同じフォルダで確認できます。再開には保存された条件を使用するため、条件を変更して実行する場合は通常ワークフローを起動してください。完了済みの実行や、別の実行が先に通知を完了した古い実行は再開できません。
 
 前回実行時間はSharePointの `run-state/checkpoint.json` で管理します。このファイルがない初回は、設定の `analysis.lookback_hours` に従って取得します。チェックポイントの削除・編集は取得期間に影響するため、復旧時以外は行わないでください。
