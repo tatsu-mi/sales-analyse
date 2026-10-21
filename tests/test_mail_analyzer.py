@@ -20,6 +20,10 @@ class MailTests(unittest.TestCase):
                 "SAKURA_MAIL_PASSWORD": "test-password", "GEMINI_API_KEY": "test-key"}, clear=True)):
             setting.start()
             self.addCleanup(setting.stop)
+        profiles = tempfile.TemporaryDirectory()
+        self.addCleanup(profiles.cleanup)
+        self.engineers_file = Path(profiles.name) / "engineers.md"
+        self.engineers_file.write_text("## Test Engineer\n\nPython development", encoding="utf-8")
         # All integration tests use the live pipeline with deterministic API responses.
         limits = patch.object(app, "model_limits", return_value={"inputTokenLimit": 1048576, "outputTokenLimit": 65536})
         count = patch.object(app, "count_input_tokens", return_value=100)
@@ -27,6 +31,11 @@ class MailTests(unittest.TestCase):
         for mock in (limits, count, pace):
             mock.start()
             self.addCleanup(mock.stop)
+
+    def analysis_config(self):
+        config = app.load_config(Path("config.example.toml"))
+        config["analysis"]["engineers_file"] = str(self.engineers_file)
+        return config
 
     @staticmethod
     def analysis_answer(mails, final):
@@ -131,7 +140,7 @@ class MailTests(unittest.TestCase):
         self.assertEqual(app.mail_body(message), "見積 & 納期")
 
     def test_imap_boundary_and_readonly(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
         client = MagicMock()
         client.__enter__.return_value = client
@@ -165,7 +174,7 @@ class MailTests(unittest.TestCase):
         self.assertEqual(client.uid.call_count, 3)  # SEARCH, metadata, body; no older fetch.
 
     def test_imap_limit_counts_only_in_period_and_sorts_uids_numerically(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
         client = MagicMock()
         client.__enter__.return_value = client
@@ -199,7 +208,7 @@ class MailTests(unittest.TestCase):
                 self.assertEqual(metadata_uids, [b"20"] + expected)
 
     def test_imap_connection_failure_has_reason_and_traceback(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
         with patch.object(app.imaplib, "IMAP4_SSL", side_effect=OSError(11001, "getaddrinfo failed")), \
                 self.assertLogs(app.LOGGER, level="INFO") as logs:
@@ -209,7 +218,7 @@ class MailTests(unittest.TestCase):
         self.assertNotIn("test-password", "\n".join(logs.output))
 
     def test_imap_authentication_failure_redacts_credentials(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
         client = MagicMock()
         client.__enter__.return_value = client
@@ -226,7 +235,7 @@ class MailTests(unittest.TestCase):
         self.assertNotIn(config["imap"]["username"], output)
 
     def test_imap_failure_reports_uid_and_server_response_without_literal(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
         client = MagicMock()
         client.__enter__.return_value = client
@@ -240,7 +249,7 @@ class MailTests(unittest.TestCase):
         self.assertNotIn("private mail body", "\n".join(logs.output))
 
     def test_mail_unicode_failure_does_not_log_raw_content(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
         client = MagicMock()
         client.__enter__.return_value = client
@@ -384,7 +393,7 @@ class MailTests(unittest.TestCase):
                 self.assertNotIn("private body", str(failure.exception))
 
     def test_file_upload_failure_preserves_local_mail_and_marks_failure(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         mails = [{"uid": "1", "body": "saved", "body_truncated": False}]
         with tempfile.TemporaryDirectory() as temp:
             config["analysis"]["output_dir"] = temp
@@ -410,7 +419,7 @@ class MailTests(unittest.TestCase):
             sleep.assert_not_called()
 
     def test_fetch_only_never_calls_gemini(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         with tempfile.TemporaryDirectory() as temp:
             config["analysis"]["output_dir"] = temp
             args = SimpleNamespace(config="config.example.toml", start=None, end=None, fetch_only=True)
@@ -422,7 +431,7 @@ class MailTests(unittest.TestCase):
             self.assertFalse((run_dir / "report.md").exists())
 
     def test_mails_and_aggregated_report_are_sent_as_files(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         mails = [{"uid": "1", "body": "first", "body_truncated": False},
                  {"uid": "2", "body": "second", "body_truncated": True}]
         with tempfile.TemporaryDirectory() as temp:
@@ -445,7 +454,7 @@ class MailTests(unittest.TestCase):
             self.assertEqual(meta["truncated_bodies"], 1)
 
     def test_fetch_saves_each_mail_before_next_and_keeps_partial_on_failure(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         first = {"uid": "1", "body": "saved immediately", "body_truncated": False}
         with tempfile.TemporaryDirectory() as temp:
             config["analysis"]["output_dir"] = temp
@@ -471,7 +480,7 @@ class MailTests(unittest.TestCase):
             self.assertIsNone(app.find_saved_mails(Path(temp), meta["dataset_key"]))
 
     def test_auto_reuse_and_refresh(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         mails = [{"uid": "1", "body": "from disk", "body_truncated": False}]
         with tempfile.TemporaryDirectory() as temp:
             config["analysis"]["output_dir"] = temp
@@ -502,7 +511,7 @@ class MailTests(unittest.TestCase):
                 fetch.assert_called_once()
 
     def test_explicit_legacy_file_uses_source_period_and_skips_imap(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         mails = [{"uid": "1", "body": "legacy", "body_truncated": False}]
         with tempfile.TemporaryDirectory() as temp:
             legacy_dir = Path(temp) / "legacy"
@@ -532,7 +541,7 @@ class MailTests(unittest.TestCase):
             self.assertIsNone(app.read_metadata(run_dir / "metadata.json")["dataset_key"])
 
     def test_cache_identity_changes_with_mailbox_period_and_limits(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-02")
         key = app.dataset_key(config, start, stop)
         for field in ("host", "username", "folder"):
@@ -548,7 +557,7 @@ class MailTests(unittest.TestCase):
             config["analysis"][field] -= 1
 
     def test_saved_file_invalid_or_incomplete_is_rejected_before_api(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "emails.jsonl"
             source.write_text('{"uid":"1","body":"ok","body_truncated":false}\n', encoding="utf-8")
@@ -584,7 +593,7 @@ class MailTests(unittest.TestCase):
 
 
     def test_api_failure_preserves_emails_and_marks_failure(self):
-        config = app.load_config(Path("config.example.toml"))
+        config = self.analysis_config()
         mails = [{"uid": "1", "body": "saved", "body_truncated": False}]
         with tempfile.TemporaryDirectory() as temp:
             config["analysis"]["output_dir"] = temp
