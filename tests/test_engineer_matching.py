@@ -30,6 +30,26 @@ class ProfileTests(unittest.TestCase):
         path.write_text(text.replace('共通注意事項', '共通注意変更'), encoding='utf-8')
         self.assertNotEqual(profiles[0]['sha256'], matching.load_profiles(path)[0]['sha256'])
 
+    def test_numberless_profiles_keep_identity_when_people_are_added_removed_or_reordered(self):
+        path = self.root / 'engineers.md'
+        preamble = '# 一覧\n共通注意事項\n\n'
+        a = '## A｜元資料.pdf\nPython 3年\n\n'
+        b = '## B\nJava 2年\n\n'
+        c = '## C\nGo 4年\n\n'
+        path.write_text(preamble + a.replace('## A', '## 1. A')
+                        + b.replace('## B', '## 2. B'), encoding='utf-8')
+        original = {p['name']: p for p in matching.load_profiles(path)}
+        for sections, expected in ((a + b, ['A', 'B']),
+                                   (c + b + a, ['C', 'B', 'A']),
+                                   (b, ['B'])):
+            with self.subTest(expected=expected):
+                path.write_text(preamble + sections, encoding='utf-8')
+                profiles = matching.load_profiles(path)
+                self.assertEqual([p['name'] for p in profiles], expected)
+                for profile in profiles:
+                    if profile['name'] in original:
+                        self.assertEqual(profile, original[profile['name']])
+
     def test_missing_empty_duplicate_and_invalid_profiles(self):
         with self.assertRaisesRegex(ValueError, 'UTF-8'):
             matching.load_profiles(self.root / 'missing')

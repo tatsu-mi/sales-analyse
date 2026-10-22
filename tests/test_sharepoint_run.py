@@ -323,5 +323,38 @@ class SharePointRunTests(unittest.TestCase):
         self.assertIn('エラーログ保存にも失敗', public.getvalue())
 
 
+class MatchingCacheTests(unittest.TestCase):
+    def test_only_matching_records_survive_round_trip_to_a_fresh_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new = root / 'old', root / 'new'
+            cache = old / 'output/.analysis_cache/token-files-v1'
+            for folder in ('career_facts', 'shared_projects', 'answers', 'tokens'):
+                path = cache / folder / ('a' * 64 + '.json')
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('{"record":{"id":"example"}}', encoding='utf-8')
+            store = MemoryStore()
+            runner.save_matching_cache(store, old)
+            runner.restore_matching_cache(store.files['run-state/matching-cache.zip'], new)
+            restored = new / 'output/.analysis_cache/token-files-v1'
+            self.assertEqual((restored / 'career_facts' / ('a' * 64 + '.json')).read_bytes(),
+                             (cache / 'career_facts' / ('a' * 64 + '.json')).read_bytes())
+            self.assertTrue((restored / 'shared_projects' / ('a' * 64 + '.json')).is_file())
+            self.assertFalse((restored / 'answers').exists())
+            self.assertFalse((restored / 'tokens').exists())
+
+    def test_unexpected_or_traversal_cache_paths_are_rejected_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('../config.toml', 'career_facts/../../config.toml',
+                         '/absolute.json', 'answers/' + 'a' * 64 + '.json'):
+                buffer = io.BytesIO()
+                with runner.zipfile.ZipFile(buffer, 'w') as archive:
+                    archive.writestr(name, '{}')
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    runner.restore_matching_cache(buffer.getvalue(), root)
+            self.assertFalse(list(root.rglob('*')))
+
+
 if __name__ == '__main__':
     unittest.main()

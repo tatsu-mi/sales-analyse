@@ -119,7 +119,8 @@ def load_config(path, *, load_environment=True, load_priority_rules=True):
                    "retry_max_wait_seconds", "requests_per_minute", "input_tokens_per_minute"},
         "analysis": {"lookback_hours", "priority_rules_file", "start_date", "end_date", "max_emails",
                      "max_body_chars", "max_message_bytes", "output_dir", "chunk_input_tokens",
-                     "report_input_tokens", "summary_output_tokens", "instructions", "engineers_file"},
+                     "report_input_tokens", "summary_output_tokens", "instructions", "engineers_file",
+                     "matching_mandatory_weight", "matching_welcome_weight", "matching_related_weight"},
         "teams": {"timeout_seconds"},
     }
     for section, keys in (("imap", ("host", "username", "password")), ("gemini", ("api_key",)),
@@ -145,7 +146,9 @@ def load_config(path, *, load_environment=True, load_priority_rules=True):
                    "requests_per_minute": 5, "input_tokens_per_minute": 150000},
         "analysis": {"max_emails": 2000, "max_body_chars": 8000,
                      "max_message_bytes": 10000000, "chunk_input_tokens": 30000,
-                     "report_input_tokens": 60000, "summary_output_tokens": 6000},
+                     "report_input_tokens": 60000, "summary_output_tokens": 6000,
+                     "matching_mandatory_weight": 10, "matching_welcome_weight": 5,
+                     "matching_related_weight": 2},
     }.items():
         for key, default in keys.items():
             config[section][key] = positive(config[section], key, default)

@@ -196,10 +196,13 @@ def render_report(ranked, rules):
             lines.append("該当候補はありません。")
         lines.append("")
 
+    order = ("受託案件は適合条件数、募集中の明記、受信日時の新しさの順で選定します。" if 'ses_by_engineer' in ranked else
+             "適合条件数、募集中の明記、受信日時の新しさの順で選定します。")
     lines += ["条件に明確な不適合がある案件、募集終了・期限切れ案件、その他メールは優先対象から除外します。",
-             "適合条件数、募集中の明記、受信日時の新しさの順で選定します。不明条件は要確認として順位を下げます。",
+             order + "不明条件は要確認として扱います。",
              "同じメールに複数案件がある場合は、カテゴリごとに最も適合する案件で代表します。", ""]
     if "ses_by_engineer" in ranked:
+        lines += ["個人別の案件は要件ごとの重みの合計点数順に選定します。実務以外の加点は実務の0.1倍とし、同義語や同じ経験の重複加点は行いません。", ""]
         lines += ["priority_rules.mdのSES条件は全エンジニアに共通で適用し、engineers.mdの各人のスキル・通勤条件を追加判定します。", ""]
         lines += ["必須条件・共通条件・通勤条件を全て確認できた案件だけを適合確認済みとします。要確認は別枠で表示し、適合確認済みの件数を埋めるためには使いません。同じ案件が複数エンジニアの候補に入る場合があります。", ""]
         lines += ["勤務地は最寄り駅から片道90分以内、または出社不要のフルリモートを必須とします。通勤時間が確認できない案件は要確認です。", ""]
@@ -218,6 +221,14 @@ def render_report(ranked, rules):
                       f"商流・制約: {text(project['contract'])} / 懸念: {text(project['notes'])}", ""]
             if "engineer_match" in entry:
                 lines += [f"エンジニア情報との照合: {text(entry['engineer_match']['evidence'])}", ""]
+                match = entry['engineer_match']
+                if 'score' in match:
+                    lines += [f"マッチング得点: {match['score']:g}点", "",
+                              "| 加点対象 | 種類 | スキル | 基準点 | 経験係数 | 得点 |",
+                              "| --- | --- | --- | --- | --- | --- |"]
+                    for part in match.get('score_breakdown', []):
+                        lines.append(f"| {text(part.get('label', part['requirement']))} | {text(part['kind'])} | {text(', '.join(part.get('keyword_names', part['keywords'])))} | {part['weight']} | {part['factor']:g} | {part['points']:g} |")
+                    lines.append('')
                 checks = entry['engineer_match'].get('requirements', [])
                 lines += [f"必須条件の適合: {sum(check['state'] == 'match' for check in checks)}/{len(checks)}（一致率・精度の評価値ではありません）", "",
                           "| 必須条件 | 判定 | 案件の原文 | エンジニアの原文 | 理由・確認事項 |",

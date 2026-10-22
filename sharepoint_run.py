@@ -95,6 +95,39 @@ def restore_archive(raw, work):
         archive.extractall(work)
 
 
+def restore_matching_cache(raw, work):
+    """Import only content-addressed matching records from the previous run."""
+    from io import BytesIO
+    cache = work / 'output' / '.analysis_cache' / 'token-files-v1'
+    with zipfile.ZipFile(BytesIO(raw)) as archive:
+        entries = archive.infolist()
+        if sum(e.file_size for e in entries) > 250_000_000:
+            raise ValueError('Matching cache exceeds the size limit')
+        for entry in entries:
+            if not re.fullmatch(r'(?:career_facts|shared_projects)/[a-f0-9]{64}\.json', entry.filename):
+                raise ValueError('Invalid matching cache path')
+        for entry in entries:
+            target = cache / entry.filename
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(entry))
+
+
+def save_matching_cache(store, work):
+    """Carry validated facts/plans across fresh scheduled runners, not just resume."""
+    from io import BytesIO
+    cache = work / 'output' / '.analysis_cache' / 'token-files-v1'
+    paths = [path for folder in ('career_facts', 'shared_projects')
+             for path in (cache / folder).glob('*.json')
+             if re.fullmatch(r'[a-f0-9]{64}\.json', path.name)]
+    if not paths:
+        return
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(paths):
+            archive.write(path, path.relative_to(cache).as_posix())
+    store.put('run-state/matching-cache.zip', buffer.getvalue())
+
+
 def redact_credentials(text):
     secrets = [value for name, value in os.environ.items() if value and (
         name in {'SAKURA_MAIL_USERNAME', 'TEAMS_WEBHOOK_URL'}
@@ -174,6 +207,9 @@ def execute(store, work, run_id, resume=False):
         store.folder('', 'temporary-runs')
         store.folder('temporary-runs', run_id)
         snapshot_settings(Path('config.toml').resolve(), work)
+        previous_cache = store.request('GET', 'run-state/matching-cache.zip', missing=True)
+        if previous_cache is not None:
+            restore_matching_cache(previous_cache, work)
         manifest = {'status': 'created', 'previous_checkpoint': checkpoint, 'output': None,
                     'pipeline_version': app.analysis_pipeline.VERSION}
         # Keep original conditions directly readable beside the snapshots.
@@ -244,6 +280,7 @@ def execute(store, work, run_id, resume=False):
         save(output, 'notified')
     run_progress.report('committing')
     store.folder('', 'run-state')
+    save_matching_cache(store, work)
     store.put('run-state/checkpoint.json', (state_dir / 'checkpoint.json').read_bytes())
     save(output, 'complete')
     run_progress.report('complete')

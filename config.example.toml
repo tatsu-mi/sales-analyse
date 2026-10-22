@@ -47,6 +47,10 @@ output_dir = "output"
 chunk_input_tokens = 30000
 report_input_tokens = 60000
 summary_output_tokens = 6000
+# 個人別ランキングの要件ごとの配点（正の整数）。実務以外はこの得点の0.1倍。
+matching_mandatory_weight = 10
+matching_welcome_weight = 5
+matching_related_weight = 2
 # 案件抽出と最終レポートの分析観点。
 instructions = """
 メールをSES要員募集・受託システム開発・その他に分類し、priority_rules_fileの条件で判定します。

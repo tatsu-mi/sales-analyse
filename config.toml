@@ -39,9 +39,14 @@ max_body_chars = 8000
 max_message_bytes = 10000000
 # 相対パスは config.toml の場所が基準です。実行ごとにサブフォルダを作成します。
 output_dir = "output"
+# 件数ではなく、指示文・スキーマを含めた実測トークンでファイルを分割します。
 chunk_input_tokens = 30000
 report_input_tokens = 60000
 summary_output_tokens = 6000
+# 個人別ランキングの要件ごとの配点（正の整数）。実務以外はこの得点の0.1倍。
+matching_mandatory_weight = 10
+matching_welcome_weight = 5
+matching_related_weight = 2
 # 案件抽出と最終レポートの分析観点。
 instructions = """
 メールをSES要員募集・受託システム開発・その他に分類し、priority_rules_fileの条件で判定します。

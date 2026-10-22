@@ -60,6 +60,18 @@ class ConfigurationTests(unittest.TestCase):
         self.path.write_text(self.source.replace('max_emails = 2000\n', ''), encoding='utf-8')
         self.assertEqual(self.load()['analysis']['max_emails'], 2000)
 
+    def test_matching_weights_have_defaults_and_require_positive_integers(self):
+        config = self.load()['analysis']
+        self.assertEqual([config['matching_' + k + '_weight'] for k in ('mandatory', 'welcome', 'related')],
+                         [10, 5, 2])
+        for invalid in ('0', '-1', 'false', '1.5', '"10"'):
+            self.path.write_text(self.source.replace('matching_mandatory_weight = 10',
+                'matching_mandatory_weight = ' + invalid), encoding='utf-8')
+            with self.subTest(invalid=invalid), self.assertRaises(app.ToolError):
+                self.load()
+        self.path.write_text(self.source.replace('matching_mandatory_weight = 10\n', ''), encoding='utf-8')
+        self.assertEqual(self.load()['analysis']['matching_mandatory_weight'], 10)
+
     def test_engineer_file_is_resolved_relative_to_config(self):
         self.assertEqual(Path(self.load()['analysis']['engineers_file']), self.root / 'engineers.md')
         for invalid in ('""', 'false', '123'):
