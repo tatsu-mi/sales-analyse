@@ -78,8 +78,8 @@ class PriorityTests(unittest.TestCase):
                                      {'file': 'B.pdf', 'entries': []}], 'contract': []}
         report = priority.render_report(ranked, self.rules)
         summary = report.split(f'## {self.rules["ses"]["label"]} / ', 1)[0]
-        self.assertIn(f'**{self.rules["ses"]["label"]} / A\\.pdf / 適合確認済み（上位10件まで）**\n\n1. 開発案件', summary)
-        self.assertIn(f'**{self.rules["ses"]["label"]} / B\\.pdf / 適合確認済み（上位10件まで）**\n\n該当候補はありません。', summary)
+        self.assertIn(f'**{self.rules["ses"]["label"]} / A\\.pdf（上位10件まで）**\n\n1. 開発案件', summary)
+        self.assertIn(f'**{self.rules["ses"]["label"]} / B\\.pdf（上位10件まで）**\n\n該当候補はありません。', summary)
         self.assertNotIn('受託', summary)
 
     def test_title_summary_displays_markdown_titles_literally_and_handles_missing_title(self):

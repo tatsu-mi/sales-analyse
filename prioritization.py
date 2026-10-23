@@ -171,9 +171,7 @@ def report_sections(ranked, rules):
             yield rules["ses"]["label"] + "（エンジニア未登録）", []
         for group in ranked["ses_by_engineer"]:
             name = re.sub(r'([\\`*_{}\[\]()#+.!|>~-])', r'\\\1', group['file'].replace('\n', ' ').replace('\r', ' '))
-            yield f"{rules['ses']['label']} / {name} / 適合確認済み", group["entries"]
-            if 'pending_entries' in group:
-                yield f"{rules['ses']['label']} / {name} / 要確認（推薦対象外）", group['pending_entries']
+            yield f"{rules['ses']['label']} / {name}", group["entries"]
     else:
         yield rules["ses"]["label"], ranked["ses"]
 
@@ -199,9 +197,9 @@ def render_report(ranked, rules):
              order + "不明条件は要確認として扱います。",
              "同じメールに複数案件がある場合は、カテゴリごとに最も適合する案件で代表します。", ""]
     if "ses_by_engineer" in ranked:
-        lines += ["個人別の案件は要件ごとの重みの合計点数順に選定します。実務以外の加点は実務の0.1倍とし、同義語や同じ経験の重複加点は行いません。", ""]
+        lines += [f"個人別の案件は適合確認済みを優先し、各判定の中で要件ごとの重みの合計点数順に選定します。要確認も含めて合計で上位{rules['top_n']}件までとします。実務以外の加点は実務の0.1倍とし、同義語や同じ経験の重複加点は行いません。", ""]
         lines += ["priority_rules.mdのSES条件は全エンジニアに共通で適用し、engineers.mdの各人のスキル・通勤条件を追加判定します。", ""]
-        lines += ["必須条件・共通条件・通勤条件を全て確認できた案件だけを適合確認済みとします。要確認は別枠で表示し、適合確認済みの件数を埋めるためには使いません。同じ案件が複数エンジニアの候補に入る場合があります。", ""]
+        lines += ["必須条件・共通条件・通勤条件を全て確認できた案件だけを適合確認済みとします。各案件に適合・要確認の判定を表示します。同じ案件が複数エンジニアの候補に入る場合があります。", ""]
         lines += ["勤務地は最寄り駅から片道90分以内、または出社不要のフルリモートを必須とします。通勤時間が確認できない案件は要確認です。", ""]
     for label, entries in report_sections(ranked, rules):
         lines += [f"## {label}（上位{rules['top_n']}件まで）", ""]

@@ -272,6 +272,21 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual([v['uid'] for v in first[:2]], ['0', '14'])
         self.assertEqual(first, matching.shortlist(list(reversed(values)), {'top_n': 10}))
 
+    def test_combined_top10_prioritizes_confirmed_and_uses_pending_to_fill_places(self):
+        def entry(uid, state, score, **extra):
+            return dict(uid=uid, project_key=uid, received_at='2026-10-23',
+                        latest=dict(status='open', assessments=[]),
+                        engineer_match=dict(state=state, score=score), **extra)
+        values = [entry(str(i), 'unknown', 100 + i) for i in range(12)]
+        values += [entry('confirmed', 'match', 1), entry('0', 'match', 2)]
+        result = matching.shortlist(values, {'top_n': 10})
+        self.assertEqual(len(result), 10)
+        self.assertEqual([v['uid'] for v in result[:2]], ['0', 'confirmed'])
+        self.assertEqual([v['verification'] for v in result], ['適合'] * 2 + ['要確認'] * 8)
+        self.assertEqual([v['uid'] for v in result[2:]], [str(i) for i in range(11, 3, -1)])
+        self.assertEqual([v['rank'] for v in result], list(range(1, 11)))
+        self.assertEqual(len({v['uid'] for v in result}), 10)
+
 
 if __name__ == '__main__':
     unittest.main()

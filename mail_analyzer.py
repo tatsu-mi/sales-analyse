@@ -898,7 +898,7 @@ def finish_analysis(config, api_key, source, output, metadata, state_path, stop,
             except ValueError as error:
                 raise ToolError(str(error)) from None
             ranked["ses_by_engineer"] = [dict(file=p["file"], name=p['name'], sha256=p["sha256"],
-                                             entries=[], pending_entries=[]) for p in profiles]
+                                             entries=[]) for p in profiles]
             write_json(output / 'engineer_assessments.json', [])
         write_json(output / "ranked_emails.json", ranked)
         save_report_files(output, "# メール分析\n\n指定期間の対象メールは0件です。\n\n"

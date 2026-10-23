@@ -21,6 +21,7 @@ MESSAGES = {
     'extract_request': 'メール分析：{done:,} / {total:,}通完了。今回の{count:,}通をAIへ送信（入力 {tokens:,}トークン、試行 {attempt:,}回目）。',
     'extract_cached': 'メール分析：{done:,} / {total:,}通完了。今回の{count:,}通は保存済みの分析結果を使用します。',
     'extract_saved': 'メール分析：{done:,} / {total:,}通完了（スキップ {skipped:,}通）。今回の{count:,}通の分析結果を保存しました。',
+    'extract_complete': 'メール分析完了：{done:,} / {total:,}通処理済み（分析成功 {analyzed:,}通、スキップ {skipped:,}通）。案件情報の集計に進みます。',
     'extract_split_output': 'メール分析：{done:,} / {total:,}通完了。入出力のトークン上限に達したため、今回の{count:,}通を分割して再分析します。',
     'extract_split_invalid': 'メール分析：{done:,} / {total:,}通完了。構造化データの形式・整合性の検証に通らなかったため、今回の{count:,}通を分割して再分析します。',
     'extract_skip_output': 'メール分析：{done:,} / {total:,}通完了（スキップ {skipped:,}通）。1通でもトークン上限を超えたためスキップし、残りを続行します。',

@@ -91,7 +91,15 @@ class IntegratedPipelineTests(unittest.TestCase):
 
     def test_each_ses_project_matched_once_for_all_people_and_contract_is_omitted(self):
         instance = self.make(self.setup_projects(15, contract=True))
-        report = instance.run()
+        with patch.object(run_progress, 'report') as progress:
+            report = instance.run()
+        events = [call.args[0] for call in progress.call_args_list]
+        self.assertLess(events.index('extract_complete'), events.index('shared_matching'))
+        completed = next(call for call in progress.call_args_list if call.args[0] == 'extract_complete')
+        self.assertEqual(completed.kwargs['done'], 16)
+        self.assertEqual(completed.kwargs['total'], 16)
+        self.assertEqual(completed.kwargs['analyzed'], 16)
+        self.assertEqual(completed.kwargs['skipped'], 0)
         self.assertEqual(len(self.profile_calls), 2)
         self.assertEqual(len(self.project_calls), 15)
         self.assertTrue(all('assessments' not in item['project'] for item in self.project_calls))
@@ -220,8 +228,8 @@ class IntegratedPipelineTests(unittest.TestCase):
         report = instance.run()
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         for group in ranked['ses_by_engineer']:
-            self.assertEqual([e['uid'] for e in group['entries']], ['1'])
-            self.assertEqual([e['uid'] for e in group['pending_entries']], ['0'])
+            self.assertEqual([e['uid'] for e in group['entries']], ['1', '0'])
+            self.assertEqual([e['verification'] for e in group['entries']], ['適合', '要確認'])
         self.assertNotIn('contract', ranked)
         self.assertIn('案件のキーワード照合を確認できません', report)
         self.invalid_project = None
@@ -238,8 +246,8 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.assertEqual([p['project']['project_id'] for p in self.project_calls], ['P-1'])
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         for group in ranked['ses_by_engineer']:
-            self.assertFalse(group['entries'])
-            self.assertEqual([r['uid'] for r in group['pending_entries']], ['1'])
+            self.assertEqual([r['uid'] for r in group['entries']], ['1'])
+            self.assertEqual(group['entries'][0]['verification'], '要確認')
 
     def test_all_candidates_checked_before_top10_and_explicit_shortage_excluded(self):
         mails = self.setup_projects(15)
@@ -267,8 +275,8 @@ class IntegratedPipelineTests(unittest.TestCase):
         report = instance.run()
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         group = ranked['ses_by_engineer'][0]
-        self.assertFalse(group['entries'])
-        self.assertEqual(len(group['pending_entries'][0]['engineer_match']['requirements']), 2)
+        self.assertEqual(group['entries'][0]['verification'], '要確認')
+        self.assertEqual(len(group['entries'][0]['engineer_match']['requirements']), 2)
         self.assertIn('英語', report)
 
     def test_output_truncation_splits_shared_batches_without_losing_people_or_projects(self):
@@ -324,10 +332,9 @@ class IntegratedPipelineTests(unittest.TestCase):
         instance.run()
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         a, b = ranked['ses_by_engineer']
-        self.assertEqual([e['uid'] for e in a['entries']], ['0'])
-        self.assertEqual([e['uid'] for e in a['pending_entries']], ['1'])
+        self.assertEqual([e['uid'] for e in a['entries']], ['0', '1'])
+        self.assertEqual([e['verification'] for e in a['entries']], ['適合', '要確認'])
         self.assertFalse(b['entries'])
-        self.assertFalse(b['pending_entries'])
 
     def test_failed_person_extraction_stays_pending_and_does_not_affect_other_person(self):
         mails = self.setup_projects(1)
@@ -340,8 +347,8 @@ class IntegratedPipelineTests(unittest.TestCase):
         report = instance.run()
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         a, b = ranked['ses_by_engineer']
-        self.assertFalse(a['entries'])
-        self.assertEqual([e['uid'] for e in a['pending_entries']], ['0'])
+        self.assertEqual([e['uid'] for e in a['entries']], ['0'])
+        self.assertEqual(a['entries'][0]['verification'], '要確認')
         self.assertEqual([e['uid'] for e in b['entries']], ['0'])
         self.assertIn('キャリアシートの構造化情報を確認できません', report)
 

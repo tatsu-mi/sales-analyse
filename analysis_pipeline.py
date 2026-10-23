@@ -602,7 +602,8 @@ class Pipeline:
             "ses": sum(len(group["entries"]) for group in ranked["ses_by_engineer"]) if self.profiles is not None else len(ranked["ses"])}
         if self.profiles is not None:
             self.metadata['pending_emails_by_engineer'] = {
-                group['file']: len(group['pending_entries']) for group in ranked['ses_by_engineer']}
+                group['file']: sum(entry['verification'] == '要確認' for entry in group['entries'])
+                for group in ranked['ses_by_engineer']}
         self.save_progress()
         return prioritization.render_report(ranked, self.rules)
 
@@ -678,7 +679,7 @@ class Pipeline:
         if not self.profiles or not candidates:
             self.api.write_json(self.output / 'engineer_assessments.json', [])
             return [dict(file=p['file'], name=p.get('name', p['file']), sha256=p['sha256'],
-                         career_id=integrated_matching.profile_id(p), entries=[], pending_entries=[])
+                         career_id=integrated_matching.profile_id(p), entries=[])
                     for p in self.profiles]
 
         run_progress.report('skills_start', count=len(self.profiles))
@@ -733,7 +734,7 @@ class Pipeline:
         today = date.fromisoformat(self.metadata.get('stop_at', self.metadata['end_date'])[:10])
         result, audit = [], []
         for index, (profile, facts) in enumerate(zip(self.profiles, structured), 1):
-            confirmed, pending = [], []
+            eligible = []
             factors = integrated_matching.keyword_factors(facts)
             run_progress.report('engineer_start', index=index, total=len(self.profiles), count=len(candidates))
             for value, item, plan in zip(candidates, items, plans):
@@ -755,13 +756,10 @@ class Pipeline:
                     project_key=value.get('project_key', item['id']), project_id=latest['project_id'],
                     title=latest['title'], state=check['state'], assessment=check))
                 if check['state'] != 'mismatch':
-                    (confirmed if check['state'] == 'match' else pending).append(entry)
-            confirmed_uids = {v['uid'] for v in confirmed}
-            pending = [v for v in pending if v['uid'] not in confirmed_uids]
+                    eligible.append(entry)
             group = dict(file=profile['file'], name=profile.get('name', profile['file']),
                          career_id=facts['id'], sha256=profile['sha256'],
-                         entries=integrated_matching.shortlist(confirmed, self.rules),
-                         pending_entries=integrated_matching.shortlist(pending, self.rules))
+                         entries=integrated_matching.shortlist(eligible, self.rules))
             result.append(group)
             atomic_json(self.output / 'engineers' / (digest(profile['file']) + '.json'), {'group': group})
             self.api.write_json(self.output / 'engineer_assessments.json', audit)
@@ -787,7 +785,8 @@ class Pipeline:
             if (self.metadata["extracted_unique_count"] + self.metadata["skipped_unique_count"]
                     != self.metadata["analysis_target_count"]):
                 raise self.api.ToolError("選別後の全メールの構造化抽出を完了できませんでした。")
-            print("メール分析が完了しました。案件情報を集計し、レポート作成に進みます。", flush=True)
+            self.mail_progress('案件情報の集計に進みます', 'extract_complete',
+                               analyzed=self.metadata['extracted_unique_count'])
             atomic_json(self.output / "extraction_complete.json", {
                 'pipeline_version': VERSION, **{
                     key: self.metadata[key] for key in ("extracted_unique_count", "skipped_unique_count", "skipped_emails", "extraction_chunks")}})

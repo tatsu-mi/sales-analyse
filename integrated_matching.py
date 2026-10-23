@@ -592,14 +592,14 @@ def assess(plan, item, profile, today, weights):
 
 
 def shortlist(values, rules):
-    """Keep the best project per mail, ordered by score with stable tie breakers."""
+    """One Top10 per person: confirmed first, then score, with stable tie breakers."""
     by_mail = {}
     for value in values:
         checks = value['latest']['assessments']
         entry = dict(value, matches=sum(c['state'] == 'match' for c in checks),
                      total_criteria=len(checks), verification='適合' if value['engineer_match']['state'] == 'match'
                      and all(c['state'] == 'match' for c in checks) else '要確認')
-        key = (value['engineer_match']['score'], value['latest']['status'] == 'open',
+        key = (entry['verification'] == '適合', value['engineer_match']['score'], value['latest']['status'] == 'open',
                value['received_at'], value['uid'], value.get('project_key', ''))
         previous = by_mail.get(value['uid'])
         if previous is None or key > previous[0]:
