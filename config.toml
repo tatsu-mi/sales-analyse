@@ -32,7 +32,7 @@ priority_rules_file = "priority_rules.md"
 # start_date = "2026-10-01"
 # end_date = "2026-10-15"
 # 新しいメールから取得する件数の上限。達したら取得を終えて分析に進みます。
-max_emails = 2000
+max_emails = 800
 # 1件の本文の文字数上限。超えた分は省略し、記録に明示します。
 max_body_chars = 8000
 # 添付を含むメール全体のサイズ上限（バイト）。超えた場合は停止します。
