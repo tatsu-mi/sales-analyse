@@ -56,7 +56,7 @@ class PublicProgressTests(unittest.TestCase):
         self.assertIn('12,000トークン', lines[0])
         self.assertIn('試行 1回目', lines[0])
         self.assertIn('トークン上限', lines[1])
-        self.assertIn('検証できない', lines[2])
+        self.assertIn('形式・整合性の検証に通らなかった', lines[2])
         self.assertIn('5 / 542通完了', lines[3])
 
 
