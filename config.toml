@@ -49,8 +49,8 @@ matching_welcome_weight = 5
 matching_related_weight = 2
 # 案件抽出と最終レポートの分析観点。
 instructions = """
-メールをSES要員募集・受託システム開発・その他に分類し、priority_rules_fileの条件で判定します。
-その他は優先対象から除外します。SESはengineers.mdのエンジニアごとに適合確認済みと要確認を分け、受託は全体で上位10通までをメール単位で抽出します。
+メールからSES要員募集を抽出し、priority_rules_fileの条件で判定します。
+engineers.mdのエンジニアごとに適合確認済みと要確認を分け、上位10通までをメール単位で抽出します。原文引用や市況メモは出力しません。
 """
 
 [teams]

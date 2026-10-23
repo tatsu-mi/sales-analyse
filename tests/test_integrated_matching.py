@@ -9,7 +9,7 @@ import integrated_matching as matching
 def fact(terms=('Python',), experience='professional', months=48, **extra):
     return dict(dict(terms=list(terms), event_id='work-1', experience=experience,
                      polarity='present', months=months, duration_kind='total',
-                     start='', end='', quote='Python'), **extra)
+                     start='', end=''), **extra)
 
 
 def career(item=None, facts=None, attributes=None, routes=None):
@@ -34,7 +34,7 @@ def plan(item, keywords=None):
                     for i, _ in enumerate(item['project']['mandatory_requirements'], 1)]
     return dict(id=item['id'], requirements=requirements, additional_requirements=[],
                 preferences=[], complete=True, unassessed_requirements=[],
-                commute=dict(mode='full_remote', workplaces=[], quote=item['source_body']))
+                commute=dict(mode='full_remote', workplaces=[]))
 
 
 class MatchingTests(unittest.TestCase):
@@ -53,13 +53,12 @@ class MatchingTests(unittest.TestCase):
     def assess(self):
         return matching.assess(self.plan, self.item, self.person, self.today, matching.DEFAULT_WEIGHTS)
 
-    def test_profiles_validate_own_quotes_and_reject_other_people_and_feedback(self):
+    def test_profiles_validate_typed_facts_without_source_quotes(self):
         item = dict(id='career-A', text='Python')
         valid = json.dumps(dict(records=[self.person]))
         self.assertEqual(matching.validate_profiles(valid, [item]), [self.person])
-        for source in ('Java', '本文にフィードバックは含めない'):
-            with self.subTest(source=source), self.assertRaises(ValueError):
-                matching.validate_profiles(valid, [dict(item, text=source)])
+        self.assertNotIn('quote', self.person['facts'][0])
+        self.assertEqual(matching.validate_profiles(json.dumps(dict(records=[self.person])), [item]), [self.person])
         with self.assertRaises(ValueError):
             matching.validate_profiles(json.dumps(dict(records=[self.person, self.person])), [item])
 
@@ -216,14 +215,13 @@ class MatchingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 matching.validate_keyword_matches(json.dumps(dict(records=[bad])), [item], dictionary)
 
-    def test_structure_validates_original_evidence_and_graphs_before_matching(self):
+    def test_structure_validates_conditions_without_source_evidence(self):
         project = dict(mandatory_requirements=[dict(requirement='Python', category='skill',
             source_quote='Python', root='a', nodes=[atom()])], matching=dict(
             preferences=[], complete=True, unassessed_requirements=[], commute=self.plan['commute']))
         matching.validate_structure(project, self.item['source_body'])
-        for mutate in (lambda p: p['mandatory_requirements'][0].update(source_quote='not in source'),
-                       lambda p: p['mandatory_requirements'][0].update(root='missing'),
-                       lambda p: p['matching']['commute'].update(quote='not in source')):
+        for mutate in (lambda p: p['mandatory_requirements'][0].update(root='missing'),
+                       lambda p: p['matching']['commute'].update(mode='invalid')):
             bad = copy.deepcopy(project)
             mutate(bad)
             with self.assertRaises(ValueError):

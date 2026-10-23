@@ -25,11 +25,16 @@ class MarkdownRulesTests(unittest.TestCase):
         self.assertEqual(rules['top_n'], 10)
         self.assertEqual(rules['ses']['label'], 'SES案件')
         self.assertEqual(len(rules['ses']['criteria']), 4)
-        self.assertEqual(len(rules['contract']['criteria']), 4)
+        self.assertNotIn('contract', rules)
         self.assertEqual(rules['prefilter']['batch_size'], 100)
         self.assertTrue(rules['prefilter']['ai_enabled'])
         self.assertNotIn('`', rules['prefilter']['keep_patterns'][0])
         self.assertTrue(rules['prefilter']['ai_instructions'])
+
+    def test_deprecated_contract_section_is_ignored(self):
+        rules = self.load(self.source + '\n## 受託: 廃止済み\n\n- この条件は判定しない\n')
+        self.assertNotIn('contract', rules)
+        self.assertNotIn('この条件', str(rules))
 
     def test_wrapped_criteria_comments_crlf_and_disabled_settings(self):
         rules = self.load(self.source.replace('## 表示件数\n\n10', '## 表示件数\n\n3')
@@ -63,7 +68,7 @@ class MarkdownRulesTests(unittest.TestCase):
 
     def test_empty_criteria_and_invalid_utf8_fail(self):
         start = self.source.index('## SES:')
-        end = self.source.index('## 受託:')
+        end = self.source.index('## 件名選別')
         with self.assertRaises(ValueError):
             self.load(self.source[:start] + '## SES: SES案件\n\n' + self.source[end:])
         self.path.write_bytes(b'\xff')

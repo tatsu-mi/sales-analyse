@@ -131,7 +131,7 @@ def report_card_payloads(summary, report, title='メール分析レポート'):
     has_section = False
     for block in [summary + '\n\n', *report_blocks(report)]:
         if block.startswith('## '):
-            # Each skill sheet (and the contract category) ends its own post.
+            # Each skill sheet ends its own post.
             if has_section and current:
                 chunks.append(current)
                 current = ''

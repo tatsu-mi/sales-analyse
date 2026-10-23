@@ -25,24 +25,14 @@ def opportunity(budget="70万円/月", deadline="", status="open", project_id="P
     value = dict.fromkeys(pipeline.TEXT_FIELDS, "")
     value.update(title="Python development", project_id=project_id, budget=budget,
                  deadline_iso=deadline, status=status, skills=["Python"], notes=notes, kind="ses",
-                 mandatory_requirements=[dict(requirement='Python実務', category='skill', source_quote='Python',
+                 mandatory_requirements=[dict(requirement='Python実務', category='skill',
                      root='python', nodes=[dict(id='python', op='atom', field='skill', terms=['Python'],
                                                experience='professional', min_months=0)])],
                  matching=dict(preferences=[], complete=True, unassessed_requirements=[],
-                               commute=dict(mode='full_remote', workplaces=[], quote='Python')),
+                               commute=dict(mode='full_remote', workplaces=[])),
                  assessments=[{"criterion": i, "state": "unknown", "evidence": ""}
                               for i in range(1, len(pipeline.prioritization.load_rules('priority_rules.example.md')['ses']['criteria']) + 1)])
     return value
-
-
-def checked_record(item, state='match', commute=None):
-    return dict(id=item['id'], state=state, evidence='案件とプロフィールの照合',
-                unassessed_requirements=[],
-                requirements=[dict(criterion=index, state=state, project_quote=req['source_quote'],
-                                   engineer_quote='Python', reason='実務経験を照合')
-                              for index, req in enumerate(item.get('project', {}).get('mandatory_requirements', []), 1)],
-                commute=commute or dict(mode='full_remote', nearest_station='', workplace='', minutes=-1,
-                                       route='', evidence='出社不要'))
 
 
 class PipelineTests(unittest.TestCase):
@@ -95,13 +85,7 @@ class PipelineTests(unittest.TestCase):
                 raise app.ToolError("transient failure")
             if self.output_cutoff and len(items) > self.output_cutoff:
                 raise app.OutputLimitError("output truncated")
-            for item in items:
-                for project in self.extracted.get(item['uid'], []):
-                    for req in project.get('mandatory_requirements', []):
-                        req['source_quote'] = item['body']
-                    project['matching']['commute']['quote'] = item['body']
             return json.dumps({"records": [{"uid": item["uid"], "kind": "ses", "tags": ["Python"],
-                                             "market_notes": "Market observations",
                                              "opportunities": self.extracted.get(item["uid"], [])} for item in items]})
         return "Report: retained evidence UID 1"
 
@@ -128,26 +112,67 @@ class PipelineTests(unittest.TestCase):
             list(instance.fit([mail(7, "x" * 3000)], "prompt", instance.settings, 1024))
 
 
-    def test_requirement_extraction_must_quote_the_original_mail(self):
+    def test_requirement_extraction_needs_no_source_quote(self):
         project = opportunity()
         record = dict(uid='1', kind='ses', tags=[], market_notes='', opportunities=[project])
         answer = lambda: json.dumps(dict(records=[record]))
         rules = self.config['priority_rules']
         self.assertEqual(len(pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)), 1)
         project['mandatory_requirements'][0]['source_quote'] = 'Java実務必須'
-        with self.assertRaises(pipeline.InvalidExtraction):
-            pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)
+        self.assertEqual(len(pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)), 1)
         del project['mandatory_requirements']
         with self.assertRaises(pipeline.InvalidExtraction):
             pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)
+
+    def test_compact_keyword_extraction_ranks_without_quotes_and_reprints_saved_mail(self):
+        import integrated_matching as matching
+        from test_integrated_matching import career, fact
+        project = opportunity()
+        project['mandatory_requirements'] = [dict(terms=['Python', 'Java'], operator='any',
+                                                  experience='any', min_months=0)]
+        project['matching']['preferences'] = [dict(kind='welcome', terms=['SQL'])]
+        for check in project['assessments']:
+            check.pop('evidence', None)
+            check['state'] = 'match'
+        self.extracted = {'1': [project]}
+        instance = self.make([mail(1, 'AIに再送しない転載用の本文')])
+        instance.profiles = [dict(file='A', sha256='A', text='Python研修')]
+        original = self.generate
+
+        def generate(*args, **kwargs):
+            schema = kwargs['response_schema']
+            if schema == pipeline.EXTRACTION_SCHEMA:
+                return original(*args, **kwargs)
+            kwargs['before_request']()
+            items = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
+            if schema == matching.PROFILE_SCHEMA:
+                rows = [career(item, facts=[fact(experience='non_professional', months=-1,
+                                               duration_kind='unknown')]) for item in items]
+            else:
+                self.assertNotIn('転載用の本文', pipeline.encoded(items))
+                rows = [dict(id=item['id'], matches=[dict(requirement=u['id'], keywords=[])
+                        for u in item['project']['units']]) for item in items]
+            return json.dumps(dict(records=rows))
+
+        self.api.generate = generate
+        report = instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        entries = ranked['ses_by_engineer'][0]['entries']
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]['engineer_match']['score'], 1)
+        self.assertIn('AIに再送しない転載用の本文', report)
+        extracted = (instance.output / 'extracted_emails.jsonl').read_text(encoding='utf-8')
+        self.assertNotIn('source_quote', extracted)
+        self.assertNotIn('source_body', extracted)
+        self.assertNotIn('market_notes', extracted)
 
     def test_extraction_requires_valid_condition_graph_and_matching_metadata(self):
         for mutate in (lambda p: p['mandatory_requirements'][0].pop('nodes'),
                        lambda p: p['mandatory_requirements'][0].update(root='missing'),
                        lambda p: p.pop('matching'),
-                       lambda p: p['matching']['commute'].update(quote='存在しない原文'),
+                       lambda p: p['matching']['commute'].update(mode='invalid'),
                        lambda p: p['matching'].update(preferences=[dict(id='p1', kind='welcome',
-                           requirement='Java', terms=['Java'], quote='存在しない原文')])):
+                           requirement='Java', terms=[])])):
             project = copy.deepcopy(opportunity())
             mutate(project)
             answer = json.dumps(dict(records=[dict(uid='1', kind='ses', tags=[], market_notes='',
@@ -155,24 +180,6 @@ class PipelineTests(unittest.TestCase):
             with self.subTest(project=project), self.assertRaises(pipeline.InvalidExtraction):
                 pipeline.validate_extraction(answer, [mail(1, 'Python')], self.config['priority_rules'])
 
-
-
-    def test_engineer_response_truncation_splits_without_losing_candidates(self):
-        instance = self.make([mail(1)])
-        items = [{'id': str(i)} for i in range(3)]
-
-        def matching(*args, **kwargs):
-            batch = [json.loads(line) for line in self.uploads[kwargs['file_data']['uri']].splitlines()]
-            if len(batch) > 1:
-                raise app.OutputLimitError('truncated')
-            return json.dumps({'records': [checked_record(batch[0], state='unknown',
-                commute=dict(mode='unknown', nearest_station='', workplace='', minutes=-1,
-                             route='', evidence='勤務地不明'))]})
-
-        with patch.object(instance.api, 'generate', side_effect=matching):
-            batch, text, tokens = next(instance.groups(items, 'prompt', instance.settings, instance.report_limit, engineer_matching.SCHEMA))
-            records = instance.match_part(batch, text, tokens, 'prompt', 'test')
-        self.assertEqual([r['id'] for r in records], ['0', '1', '2'])
 
     def test_no_profiles_has_no_shared_ses_shortlist(self):
         self.extracted = {'1': [opportunity()]}
@@ -183,26 +190,6 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(ranked['ses_by_engineer'], [])
         self.assertEqual(ranked['ses'], [])
         self.assertIn('エンジニア未登録', report)
-
-
-    def test_unusable_single_engineer_response_is_pending_and_not_cached(self):
-        instance = self.make([mail(1)])
-        items = [dict(id='0', project=opportunity())]
-        batch, text, tokens = next(instance.groups(
-            items, 'prompt', instance.settings, instance.report_limit, engineer_matching.SCHEMA))
-        failures = ['not JSON', '{"records":[]}', app.OutputLimitError('truncated')]
-        for failure in failures:
-            with self.subTest(failure=failure):
-                with patch.object(instance.api, 'generate', side_effect=[failure]):
-                    records = instance.match_part(batch, text, tokens, 'prompt', 'test', 'Python')
-                self.assertEqual(records[0]['state'], 'unknown')
-                engineer_matching.validate(json.dumps(dict(records=records)), items, 'Python')
-        with patch.object(instance.api, 'generate', return_value=json.dumps(
-                dict(records=[checked_record(items[0])]))) as generate:
-            records = instance.match_part(batch, text, tokens, 'prompt', 'test', 'Python')
-        generate.assert_called_once()
-        self.assertEqual(records[0]['state'], 'match')
-
 
 
     def test_exact_duplicate_preserves_latest_uid_and_all_sources(self):
@@ -259,14 +246,86 @@ class PipelineTests(unittest.TestCase):
         self.output_cutoff = 1
         mails = [mail(1, "a"), mail(2, "b"), mail(3, "c")]
         first = self.make(mails)
-        first.run()
+        with patch.object(pipeline.run_progress, 'report') as progress:
+            first.run()
+        sent = [c.kwargs for c in progress.call_args_list if c.args == ('extract_request',)]
+        self.assertEqual([s['count'] for s in sent], [3, 1, 2, 1, 1])
+        self.assertEqual([s['done'] for s in sent], [0, 0, 1, 1, 2])
+        self.assertTrue(all(s['tokens'] > 0 and s['attempt'] == 1 for s in sent))
+        split = [c.kwargs for c in progress.call_args_list if c.args == ('extract_split_output',)]
+        self.assertEqual([s['count'] for s in split], [3, 2])
+        saved = [c.kwargs for c in progress.call_args_list if c.args == ('extract_saved',)]
+        self.assertEqual([s['done'] for s in saved], [1, 2, 3])
         self.assertEqual(first.metadata["extracted_unique_count"], 3)
         self.assertTrue(any(len(group) > 1 for group in self.calls if "body" in group[0]))
         self.calls.clear()
         second = self.make(mails)
-        second.run()
+        with patch.object(pipeline.run_progress, 'report') as progress:
+            second.run()
         self.assertFalse(self.calls)
         self.assertEqual(second.metadata["extracted_unique_count"], 3)
+        self.assertFalse(any(c.args == ('extract_request',) for c in progress.call_args_list))
+        self.assertTrue(any(c.args == ('extract_cached',) for c in progress.call_args_list))
+
+    def test_generation_retry_reports_attempts_without_increasing_completed_count(self):
+        original = self.api.generate
+
+        def generate(*args, **kwargs):
+            kwargs['before_request']()
+            return original(*args, **kwargs)
+
+        instance = self.make([mail(1)])
+        with patch.object(self.api, 'generate', side_effect=generate), \
+                patch.object(pipeline.run_progress, 'report') as progress:
+            instance.run()
+        sent = [c.kwargs for c in progress.call_args_list if c.args == ('extract_request',)]
+        self.assertEqual([s['attempt'] for s in sent], [1, 2])
+        self.assertEqual([s['done'] for s in sent], [0, 0])
+        self.assertEqual(instance.metadata['extracted_unique_count'], 1)
+
+    def test_first_invalid_extraction_is_snapshotted_once_with_diagnostic_files(self):
+        self.output_cutoff = 1
+        original = self.api.generate
+
+        def generate(*args, **kwargs):
+            original(*args, **kwargs)
+            return 'not JSON'
+
+        instance = self.make([mail(1, 'first'), mail(2, 'second'), mail(3, 'third')])
+        stages = []
+
+        def checkpoint(output, stage):
+            stages.append(stage)
+            if stage == 'extraction_failed':
+                metadata = json.loads((output / 'metadata.json').read_text(encoding='utf-8'))
+                self.assertEqual(metadata['skipped_unique_count'], 1)
+                diagnostic = metadata['extraction_failures']['invalid_extraction']
+                self.assertTrue((output / diagnostic['request_file']).is_file())
+                self.assertEqual((output / diagnostic['response_file']).read_text(encoding='utf-8'), 'not JSON')
+
+        instance.progress = checkpoint
+        with patch.object(self.api, 'generate', side_effect=generate):
+            instance.run()
+        self.assertEqual(stages.count('extraction_failed'), 1)
+        self.assertEqual(instance.metadata['skipped_unique_count'], 3)
+        self.assertTrue((instance.output / 'extraction_failure-invalid_extraction.json').is_file())
+
+    def test_output_limit_diagnostic_survives_interruption_after_checkpoint(self):
+        instance = self.make([mail(1)])
+
+        def checkpoint(output, stage):
+            if stage == 'extraction_failed':
+                raise app.ToolError('interrupted after diagnostic save')
+
+        instance.progress = checkpoint
+        with patch.object(self.api, 'generate', side_effect=app.OutputLimitError('output truncated')):
+            with self.assertRaisesRegex(app.ToolError, 'interrupted after diagnostic save'):
+                instance.run()
+        diagnostic = json.loads((instance.output / 'extraction_failure-output_limit.json').read_text(encoding='utf-8'))
+        self.assertEqual(diagnostic['reason'], 'output_limit')
+        self.assertEqual(diagnostic['message'], 'output truncated')
+        self.assertIsNone(diagnostic['response_file'])
+        self.assertTrue((instance.output / diagnostic['request_file']).is_file())
 
     def test_bad_single_mail_is_skipped_after_splitting_and_retried_on_restart(self):
         mails = [mail(1, 'first'), mail(2, 'bad'), mail(3, 'last')]
@@ -279,8 +338,13 @@ class PipelineTests(unittest.TestCase):
             return answer
 
         instance = self.make(mails)
-        with patch.object(self.api, 'generate', side_effect=generate):
+        with patch.object(self.api, 'generate', side_effect=generate), \
+                patch.object(pipeline.run_progress, 'report') as progress:
             summary = instance.run()
+        self.assertTrue(any(c.args == ('extract_split_invalid',) for c in progress.call_args_list))
+        skipped = [c.kwargs for c in progress.call_args_list if c.args == ('extract_skip_invalid',)]
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]['skipped'], 1)
         self.assertEqual(instance.metadata['extracted_unique_count'], 2)
         self.assertEqual(instance.metadata['skipped_unique_count'], 1)
         self.assertEqual(instance.metadata['skipped_emails'], [{'uid': '2', 'reason': 'invalid_extraction'}])
@@ -337,7 +401,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len((instance.output / "opportunities.jsonl").read_text(encoding="utf-8").splitlines()), 12)
         self.assertEqual(instance.metadata["extracted_unique_count"], 12)
 
-    def test_mixed_mail_ranks_in_both_categories_and_mismatch_is_excluded(self):
+    def test_only_ses_is_ranked_and_mismatch_is_excluded(self):
         ses = opportunity()
         contract = opportunity(project_id="C-1")
         contract.update(kind="contract", assessments=[
@@ -345,15 +409,14 @@ class PipelineTests(unittest.TestCase):
             for i in range(1, 5)])
         rejected = opportunity(project_id="P-2")
         rejected["assessments"][0].update(state="mismatch", evidence="主要技術はPHP")
-        self.extracted = {"1": [ses, contract], "2": [rejected]}
+        self.extracted = {"1": [ses], "2": [rejected]}
         instance = self.make([mail(1), mail(2, "PHP development")])
         report = instance.run()
         result = json.loads((instance.output / "ranked_emails.json").read_text(encoding="utf-8"))
         self.assertEqual([value["uid"] for value in result["ses"]], ["1"])
-        self.assertEqual([value["uid"] for value in result["contract"]], ["1"])
-        self.assertEqual(result["contract"][0]["verification"], "適合")
+        self.assertNotIn("contract", result)
         self.assertIn(self.config['priority_rules']['ses']['label'], report)
-        self.assertIn(self.config['priority_rules']['contract']['label'], report)
+        self.assertNotIn('受託', report)
 
     def test_changed_rule_reextracts_instead_of_reusing_old_assessments(self):
         self.make([mail(1)]).run()
@@ -433,7 +496,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn('上限超過による除外: 2 件',
                       (instance.output / 'report.md').read_text(encoding='utf-8'))
 
-    def test_report_embeds_latest_source_mail_without_rewriting_it(self):
+    def test_report_embeds_latest_source_mail_without_ai_or_rewriting_it(self):
         self.extracted = {'1': [opportunity()], '2': [opportunity()]}
         mails = [dict(mail(1, '以前の条件'), subject='以前の件名'),
                  dict(mail(2, '最新本文\n\n  空白と|記号', '2026-10-02T09:00:00+09:00'),
@@ -446,6 +509,7 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn('UID:', report)
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         self.assertEqual(ranked['ses'][0]['source_email']['body'], mails[1]['body'])
+        self.assertNotIn('source_body', ranked['ses'][0])
 
     def test_all_mechanically_excluded_never_calls_generation(self):
         self.config['priority_rules']['prefilter']['enabled'] = True

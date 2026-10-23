@@ -79,9 +79,7 @@ class IntegratedPipelineTests(unittest.TestCase):
                 check.update(state='match', evidence='共通条件を確認')
         if contract:
             c = harness.opportunity(project_id='C-1')
-            c.update(kind='contract', assessments=[dict(criterion=i + 1, state='match', evidence='開発相談')
-                     for i in range(len(self.h.config['priority_rules']['contract']['criteria']))])
-            self.h.extracted[str(count)] = [c]
+            self.h.extracted[str(count)] = []
         return [harness.mail(i, f'Python 出社不要 {i}') for i in range(count + int(contract))]
 
     def make(self, mails, profiles=None):
@@ -91,7 +89,7 @@ class IntegratedPipelineTests(unittest.TestCase):
             for name in ('A', 'B')]
         return instance
 
-    def test_each_project_matched_once_for_all_people_and_contract_is_independent(self):
+    def test_each_ses_project_matched_once_for_all_people_and_contract_is_omitted(self):
         instance = self.make(self.setup_projects(15, contract=True))
         report = instance.run()
         self.assertEqual(len(self.profile_calls), 2)
@@ -99,18 +97,16 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.assertTrue(all('assessments' not in item['project'] for item in self.project_calls))
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         self.assertEqual([len(g['entries']) for g in ranked['ses_by_engineer']], [10, 10])
-        self.assertEqual([r['uid'] for r in ranked['contract']], ['15'])
+        self.assertNotIn('contract', ranked)
         self.assertFalse(ranked['ses'])
         self.assertIn('マッチング得点: 10点', report)
         audit = json.loads((instance.output / 'engineer_assessments.json').read_text(encoding='utf-8'))
         self.assertEqual(len(audit), 30)
         self.assertEqual(len({(r['career_id'], r['project_key']) for r in audit}), 30)
-        self.assertEqual(ranked['ses_by_engineer'][0]['entries'][0]['source_email']['body'],
-                         next(m['body'] for m in instance.api.iter_saved_mails(instance.source)
-                              if m['uid'] == ranked['ses_by_engineer'][0]['entries'][0]['uid']))
+        self.assertIn('source_email', ranked['ses_by_engineer'][0]['entries'][0])
         card = scheduled_run.card_payload('https://example.com/report', ranked, self.h.config['priority_rules']).decode()
         self.assertIn('A', card)
-        self.assertIn('受託', card)
+        self.assertNotIn('受託', card)
 
     def test_first_analysis_structures_conditions_and_lookup_sends_no_body_or_evidence(self):
         mails = self.setup_projects(1)
@@ -123,7 +119,7 @@ class IntegratedPipelineTests(unittest.TestCase):
             encoding='utf-8').splitlines()]
         requirement = rows[0]['opportunities'][0]['mandatory_requirements'][0]
         self.assertEqual(requirement['nodes'][0]['min_months'], 36)
-        self.assertIn(marker, requirement['source_quote'])
+        self.assertNotIn(marker, pipeline.encoded(requirement))
         self.assertEqual(len(self.project_calls), 1)
         payload = self.project_calls[0]
         self.assertEqual(set(payload), {'id', 'project'})
@@ -138,10 +134,10 @@ class IntegratedPipelineTests(unittest.TestCase):
         plans = json.loads((instance.output / 'project_matching.json').read_text(encoding='utf-8'))
         self.assertEqual(plans[0]['requirements'][0]['nodes'][0]['min_months'], 36)
 
-    def test_profile_cache_identity_remains_compatible_with_v5(self):
+    def test_quote_free_profile_cache_has_new_identity(self):
         instance = self.make(self.setup_projects(1))
         item = dict(id=matching.profile_id(instance.profiles[0]), text=instance.profiles[0]['text'])
-        expected = pipeline.digest(pipeline.encoded(dict(version=5, system=instance.api.SYSTEM,
+        expected = pipeline.digest(pipeline.encoded(dict(version=7, system=instance.api.SYSTEM,
             text=pipeline.encoded(item), prompt=matching.PROFILE_PROMPT,
             model=instance.settings['model'], output=instance.settings['max_output_tokens'],
             thinking=instance.settings.get('thinking_level'), schema=matching.PROFILE_SCHEMA)))
@@ -226,7 +222,7 @@ class IntegratedPipelineTests(unittest.TestCase):
         for group in ranked['ses_by_engineer']:
             self.assertEqual([e['uid'] for e in group['entries']], ['1'])
             self.assertEqual([e['uid'] for e in group['pending_entries']], ['0'])
-        self.assertEqual([e['uid'] for e in ranked['contract']], ['2'])
+        self.assertNotIn('contract', ranked)
         self.assertIn('案件のキーワード照合を確認できません', report)
         self.invalid_project = None
         self.project_calls.clear()
@@ -337,7 +333,7 @@ class IntegratedPipelineTests(unittest.TestCase):
         mails = self.setup_projects(1)
         def profiles(record, item):
             if item['id'] == matching.profile_id(dict(file='A')):
-                record['facts'][0]['quote'] = '存在しない引用'
+                record['facts'][0]['experience'] = 'invalid'
             return record
         self.profile_transform = profiles
         instance = self.make(mails)

@@ -3,7 +3,7 @@ import re
 import title_filter
 from pathlib import Path
 
-KINDS = ("ses", "contract")
+KINDS = ("ses",)
 STATES = ("match", "mismatch", "unknown")
 
 
@@ -38,9 +38,9 @@ def parse_markdown_rules(text):
             raise ValueError('判定条件の見出しは ## で指定してください。')
         elif current is not None:
             sections[current].append(line)
-    required = {'top_n', 'ses', 'contract', 'prefilter', 'keep_patterns',
+    required = {'top_n', 'ses', 'prefilter', 'keep_patterns',
                 'exclude_patterns', 'ai_instructions'}
-    if set(sections) != required:
+    if set(sections) - {'contract'} != required:
         raise ValueError('判定条件の必須見出しが不足しています。サンプルを確認してください。')
 
     def bullets(key):
@@ -101,7 +101,7 @@ def validate_rules(rules):
                 or not all(isinstance(item, str) and item.strip() for item in section["criteria"])):
             raise ValueError(f"{kind} のlabelとcriteriaを設定してください。")
     title_filter.validate_settings(rules.get("prefilter", {}))
-    return rules
+    return {key: value for key, value in rules.items() if key != "contract"}
 
 
 def validate_assessments(opportunity, rules):
@@ -112,9 +112,7 @@ def validate_assessments(opportunity, rules):
         raise ValueError("条件判定の件数が不正です。")
     for index, check in enumerate(checks):
         if (not isinstance(check, dict) or type(check.get("criterion")) is not int
-                or check["criterion"] != index + 1 or check.get("state") not in STATES
-                or not isinstance(check.get("evidence"), str)
-                or (check["state"] != "unknown" and not check["evidence"].strip())):
+                or check["criterion"] != index + 1 or check.get("state") not in STATES):
             raise ValueError("条件判定の順序・状態・根拠が不正です。")
 
 
@@ -178,7 +176,6 @@ def report_sections(ranked, rules):
                 yield f"{rules['ses']['label']} / {name} / 要確認（推薦対象外）", group['pending_entries']
     else:
         yield rules["ses"]["label"], ranked["ses"]
-    yield rules["contract"]["label"], ranked["contract"]
 
 
 def render_report(ranked, rules):
@@ -196,7 +193,7 @@ def render_report(ranked, rules):
             lines.append("該当候補はありません。")
         lines.append("")
 
-    order = ("受託案件は適合条件数、募集中の明記、受信日時の新しさの順で選定します。" if 'ses_by_engineer' in ranked else
+    order = ("共通条件の適合数、募集中の明記、受信日時の新しさを判定します。" if 'ses_by_engineer' in ranked else
              "適合条件数、募集中の明記、受信日時の新しさの順で選定します。")
     lines += ["条件に明確な不適合がある案件、募集終了・期限切れ案件、その他メールは優先対象から除外します。",
              order + "不明条件は要確認として扱います。",
@@ -214,7 +211,7 @@ def render_report(ranked, rules):
             project = entry["latest"]
             lines += [f"### {entry['rank']}位: {text(project['title'])}", "",
                       f"判定: {entry['verification']}（共通条件の適合 {entry['matches']}/{entry['total_criteria']}）  ",
-                      render_source_mail(entry["source_email"]), "",
+                      render_source_mail(entry['source_email']), "",
                       f"送信元: {text(entry['sender'])} / 問い合わせ先: {text(project['contact'])}  ",
                       f"単価・予算: {text(project['budget'])} / 開始・期間: {text(project['start'])}  ",
                       f"勤務地・勤務条件: {text(project['location'])} / スキル: {text(', '.join(project['skills']))}  ",
@@ -231,12 +228,12 @@ def render_report(ranked, rules):
                     lines.append('')
                 checks = entry['engineer_match'].get('requirements', [])
                 lines += [f"必須条件の適合: {sum(check['state'] == 'match' for check in checks)}/{len(checks)}（一致率・精度の評価値ではありません）", "",
-                          "| 必須条件 | 判定 | 案件の原文 | エンジニアの原文 | 理由・確認事項 |",
-                          "| --- | --- | --- | --- | --- |"]
+                          "| 必須条件 | 判定 | キーワード | 理由・確認事項 |",
+                          "| --- | --- | --- | --- |"]
                 states = {'match': '適合', 'mismatch': '不適合', 'unknown': '要確認'}
                 requirements = project.get('mandatory_requirements', [])
                 for requirement, check in zip(requirements, checks):
-                    lines.append(f"| {text(requirement['requirement'])} | {states[check['state']]} | {text(check['project_quote'])} | {text(check['engineer_quote'])} | {text(check['reason'])} |")
+                    lines.append(f"| {text(requirement['requirement'])} | {states[check['state']]} | {text(check.get('keywords', ''))} | {text(check['reason'])} |")
                 if not checks:
                     lines += ["", "必須条件を特定できないため要確認です。"]
                 lines.append('')

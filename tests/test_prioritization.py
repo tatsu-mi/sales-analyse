@@ -43,7 +43,7 @@ class PriorityTests(unittest.TestCase):
         expired["expired_at_period_end"] = True
         other["kind"] = "unknown"
         result = priority.shortlist([mismatch, closed, expired, other], self.rules)
-        self.assertEqual(result, {"ses": [], "contract": []})
+        self.assertEqual(result, {"ses": []})
 
     def test_complete_match_beats_newer_unknown_and_unknown_is_labeled(self):
         complete = self.candidate(1, received="2026-10-15T01:00:00+09:00")
@@ -58,7 +58,7 @@ class PriorityTests(unittest.TestCase):
 
     def test_title_summary_precedes_details_and_lists_each_category_in_rank_order(self):
         ranked = priority.shortlist([self.candidate(1), self.candidate(2),
-                                     self.candidate(3, 'contract')], self.rules)
+                                     self.candidate(3)], self.rules)
         for kind, entries in ranked.items():
             for entry in entries:
                 entry['latest']['title'] = f'{kind}案件{entry["rank"]}'
@@ -66,8 +66,7 @@ class PriorityTests(unittest.TestCase):
         summary, details = report.split(f'## {self.rules["ses"]["label"]}（', 1)
         self.assertTrue(summary.startswith('## 案件タイトルサマリー\n'))
         self.assertIn('1. ses案件1\n2. ses案件2', summary)
-        self.assertIn('1. contract案件1', summary)
-        self.assertLess(summary.index('1. ses案件1'), summary.index('1. contract案件1'))
+        self.assertNotIn('contract', summary)
         self.assertNotIn('参照元メール本文', summary)
         self.assertNotIn('判定:', summary)
         self.assertIn('### 1位: ses案件1', details)
@@ -81,7 +80,7 @@ class PriorityTests(unittest.TestCase):
         summary = report.split(f'## {self.rules["ses"]["label"]} / ', 1)[0]
         self.assertIn(f'**{self.rules["ses"]["label"]} / A\\.pdf / 適合確認済み（上位10件まで）**\n\n1. 開発案件', summary)
         self.assertIn(f'**{self.rules["ses"]["label"]} / B\\.pdf / 適合確認済み（上位10件まで）**\n\n該当候補はありません。', summary)
-        self.assertIn(f'**{self.rules["contract"]["label"]}（上位10件まで）**\n\n該当候補はありません。', summary)
+        self.assertNotIn('受託', summary)
 
     def test_title_summary_displays_markdown_titles_literally_and_handles_missing_title(self):
         ranked = priority.shortlist([self.candidate(1), self.candidate(2)], self.rules)
@@ -94,10 +93,11 @@ class PriorityTests(unittest.TestCase):
 
     def test_best_project_represents_a_mail_in_each_category(self):
         weak = self.candidate(1, states=["unknown"] * len(self.rules['ses']['criteria']))
-        strong, contract = self.candidate(1), self.candidate(1, "contract")
+        strong, contract = self.candidate(1), self.candidate(1)
+        contract["kind"] = "contract"
         result = priority.shortlist([weak, strong, contract], self.rules)
         self.assertEqual(result["ses"][0]["matches"], len(self.rules['ses']['criteria']))
-        self.assertEqual(result["contract"][0]["matches"], 4)
+        self.assertNotIn("contract", result)
 
     def test_recent_and_explicitly_open_break_ties(self):
         old = self.candidate(1, received="2026-10-15T01:00:00+09:00")

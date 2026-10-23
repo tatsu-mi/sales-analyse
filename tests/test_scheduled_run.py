@@ -40,7 +40,7 @@ class TeamsTests(unittest.TestCase):
         payload = scheduled.card_payload('https://example.com/report', ranked, rules)
         text = json.loads(payload)['attachments'][0]['content']['body'][0]['text']
         self.assertIn(r'1. \[案件\]\(https://example\.com\)  \*開発\*', text)
-        self.assertIn('受託（上位10件まで）\n\n該当候補はありません。', text)
+        self.assertNotIn('受託', text)
 
     def card_texts(self, payloads):
         return [json.loads(payload)['attachments'][0]['content']['body'][0]['text']
@@ -386,7 +386,7 @@ class ScheduledRunTests(unittest.TestCase):
                          for call in send.call_args_list)
         self.assertIn('[メール分析レポートを開く]', text)
         self.assertIn('保存済みSES条件（上位10件まで）', text)
-        titles = [f'{i}. {kind}案件{i}' for kind in ('ses', 'contract')
+        titles = [f'{i}. {kind}案件{i}' for kind in ('ses',)
                   for i in range(1, len(ranked[kind]) + 1)]
         positions = [text.index(title) for title in titles]
         self.assertEqual(positions, sorted(positions))
