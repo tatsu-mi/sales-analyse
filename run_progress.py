@@ -18,6 +18,7 @@ MESSAGES = {
     'extracting': 'メール分析：{done:,} / {total:,}通完了（スキップ {skipped:,}通）。',
     'skills_start': '全員分のスキル情報を整理しています（{count:,}人）。',
     'shared_matching': '統合キーワードへ案件を照合しています（{count:,}案件）。',
+    'shared_matching_progress': '統合キーワードへの案件照合：{done:,} / {total:,}案件処理済み（照合失敗による保留 {failed:,}案件）。',
     'engineer_start': '個人別の条件確認・得点計算：{index:,} / {total:,}人目（{count:,}案件）。',
     'engineer_reused': '人物ごとの案件照合：{index:,} / {total:,}人目は保存済みです。',
     'engineer_complete': '個人別の条件確認・得点計算：{index:,} / {total:,}人完了。',

@@ -202,16 +202,32 @@ class MatchingTests(unittest.TestCase):
         self.plan['commute'] = dict(mode='unknown', workplaces=[], quote='')
         self.assertEqual(self.assess()['state'], 'unknown')
 
-    def test_project_validation_rejects_missing_requirements_fabricated_quotes_and_keyword_ids(self):
+    def test_keyword_matching_validates_coverage_and_dictionary_ids(self):
         dictionary = [dict(id=matching.keyword_id('Python'), name='python')]
-        self.assertEqual(matching.validate_projects(json.dumps(dict(records=[self.plan])), [self.item], dictionary), [self.plan])
-        for mutate in (lambda p: p.update(requirements=[]),
-                       lambda p: p['commute'].update(quote='not in source'),
-                       lambda p: p['requirements'][0].update(keywords=['invented'])):
-            bad = copy.deepcopy(self.plan)
+        item = dict(id='X', project=dict(units=[dict(id='mandatory_1', text='Python', terms=['Python'])]))
+        record = dict(id='X', matches=[dict(requirement='mandatory_1', keywords=[])])
+        valid = matching.validate_keyword_matches(json.dumps(dict(records=[record])), [item], dictionary)
+        self.assertEqual(valid[0]['matches'][0]['keywords'], [matching.keyword_id('Python')])
+        for mutate in (lambda p: p.update(matches=[]),
+                       lambda p: p['matches'][0].update(requirement='invented'),
+                       lambda p: p['matches'][0].update(keywords=['invented'])):
+            bad = copy.deepcopy(record)
             mutate(bad)
             with self.assertRaises(ValueError):
-                matching.validate_projects(json.dumps(dict(records=[bad])), [self.item], dictionary)
+                matching.validate_keyword_matches(json.dumps(dict(records=[bad])), [item], dictionary)
+
+    def test_structure_validates_original_evidence_and_graphs_before_matching(self):
+        project = dict(mandatory_requirements=[dict(requirement='Python', category='skill',
+            source_quote='Python', root='a', nodes=[atom()])], matching=dict(
+            preferences=[], complete=True, unassessed_requirements=[], commute=self.plan['commute']))
+        matching.validate_structure(project, self.item['source_body'])
+        for mutate in (lambda p: p['mandatory_requirements'][0].update(source_quote='not in source'),
+                       lambda p: p['mandatory_requirements'][0].update(root='missing'),
+                       lambda p: p['matching']['commute'].update(quote='not in source')):
+            bad = copy.deepcopy(project)
+            mutate(bad)
+            with self.assertRaises(ValueError):
+                matching.validate_structure(bad, self.item['source_body'])
 
     def test_commute_requires_all_destinations_and_accepts_exactly_90_minutes(self):
         self.person['attributes'] = [dict(field='nearest_station', value='駅A', quote='駅A')]

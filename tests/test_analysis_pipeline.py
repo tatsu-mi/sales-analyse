@@ -1,3 +1,4 @@
+import copy
 import json
 import sqlite3
 import tempfile
@@ -24,7 +25,11 @@ def opportunity(budget="70万円/月", deadline="", status="open", project_id="P
     value = dict.fromkeys(pipeline.TEXT_FIELDS, "")
     value.update(title="Python development", project_id=project_id, budget=budget,
                  deadline_iso=deadline, status=status, skills=["Python"], notes=notes, kind="ses",
-                 mandatory_requirements=[dict(requirement='Python実務', category='skill', source_quote='Python')],
+                 mandatory_requirements=[dict(requirement='Python実務', category='skill', source_quote='Python',
+                     root='python', nodes=[dict(id='python', op='atom', field='skill', terms=['Python'],
+                                               experience='professional', min_months=0)])],
+                 matching=dict(preferences=[], complete=True, unassessed_requirements=[],
+                               commute=dict(mode='full_remote', workplaces=[], quote='Python')),
                  assessments=[{"criterion": i, "state": "unknown", "evidence": ""}
                               for i in range(1, len(pipeline.prioritization.load_rules('priority_rules.example.md')['ses']['criteria']) + 1)])
     return value
@@ -94,6 +99,7 @@ class PipelineTests(unittest.TestCase):
                 for project in self.extracted.get(item['uid'], []):
                     for req in project.get('mandatory_requirements', []):
                         req['source_quote'] = item['body']
+                    project['matching']['commute']['quote'] = item['body']
             return json.dumps({"records": [{"uid": item["uid"], "kind": "ses", "tags": ["Python"],
                                              "market_notes": "Market observations",
                                              "opportunities": self.extracted.get(item["uid"], [])} for item in items]})
@@ -134,6 +140,20 @@ class PipelineTests(unittest.TestCase):
         del project['mandatory_requirements']
         with self.assertRaises(pipeline.InvalidExtraction):
             pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)
+
+    def test_extraction_requires_valid_condition_graph_and_matching_metadata(self):
+        for mutate in (lambda p: p['mandatory_requirements'][0].pop('nodes'),
+                       lambda p: p['mandatory_requirements'][0].update(root='missing'),
+                       lambda p: p.pop('matching'),
+                       lambda p: p['matching']['commute'].update(quote='存在しない原文'),
+                       lambda p: p['matching'].update(preferences=[dict(id='p1', kind='welcome',
+                           requirement='Java', terms=['Java'], quote='存在しない原文')])):
+            project = copy.deepcopy(opportunity())
+            mutate(project)
+            answer = json.dumps(dict(records=[dict(uid='1', kind='ses', tags=[], market_notes='',
+                                                   opportunities=[project])]))
+            with self.subTest(project=project), self.assertRaises(pipeline.InvalidExtraction):
+                pipeline.validate_extraction(answer, [mail(1, 'Python')], self.config['priority_rules'])
 
 
 

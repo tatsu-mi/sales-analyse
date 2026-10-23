@@ -17,7 +17,9 @@ from email.utils import parseaddr
 from pathlib import Path
 from uuid import uuid4
 
-VERSION = 5
+VERSION = 6
+# Profile extraction is unchanged; retain its validated v5 records across runs.
+PROFILE_CACHE_VERSION = 5
 MAX_ANALYSIS_EMAILS = 1000
 KINDS = ("ses", "contract", "other")
 TEXT_FIELDS = ("title", "project_id", "contact", "budget", "start", "location", "contract",
@@ -26,18 +28,15 @@ OPPORTUNITY_SCHEMA = {
     "type": "OBJECT", "properties": {
         **{key: {"type": "STRING"} for key in TEXT_FIELDS},
         "skills": {"type": "ARRAY", "items": {"type": "STRING"}},
-        "mandatory_requirements": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
-            "requirement": {"type": "STRING"},
-            "category": {"type": "STRING", "enum": ["skill", "experience", "phase", "work"]},
-            "source_quote": {"type": "STRING"}},
-            "required": ["requirement", "category", "source_quote"]}},
+        "mandatory_requirements": integrated_matching.arr(integrated_matching.REQUIREMENT_SCHEMA),
+        "matching": integrated_matching.MATCHING_SCHEMA,
         "kind": {"type": "STRING", "enum": ["ses", "contract", "unknown"]},
         "assessments": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
             "criterion": {"type": "INTEGER"},
             "state": {"type": "STRING", "enum": list(prioritization.STATES)},
             "evidence": {"type": "STRING"}}, "required": ["criterion", "state", "evidence"]}},
         "status": {"type": "STRING", "enum": ["open", "closed", "unknown"]}},
-    "required": list(TEXT_FIELDS) + ["skills", "mandatory_requirements", "status", "kind", "assessments"]}
+    "required": list(TEXT_FIELDS) + ["skills", "mandatory_requirements", "matching", "status", "kind", "assessments"]}
 EXTRACTION_SCHEMA = {
     "type": "OBJECT", "properties": {"records": {
         "type": "ARRAY", "items": {"type": "OBJECT", "properties": {
@@ -138,17 +137,8 @@ def validate_extraction(answer, mails, rules=None):
                         or not isinstance(opportunity["skills"], list)
                         or not all(isinstance(skill, str) for skill in opportunity["skills"])):
                     raise ValueError
-                requirements = opportunity['mandatory_requirements']
-                if not isinstance(requirements, list):
-                    raise ValueError
                 source = by_uid[uid]
-                for requirement in requirements:
-                    if (not isinstance(requirement, dict)
-                            or requirement['category'] not in {'skill', 'experience', 'phase', 'work'}
-                            or not isinstance(requirement['requirement'], str) or not requirement['requirement'].strip()
-                            or not isinstance(requirement['source_quote'], str)
-                            or not engineer_matching.contains_quote(requirement['source_quote'], source['body'])):
-                        raise ValueError
+                integrated_matching.validate_structure(opportunity, source['body'])
                 if rules is not None:
                     prioritization.validate_assessments(opportunity, rules)
                 deadline = opportunity["deadline_iso"]
@@ -157,7 +147,7 @@ def validate_extraction(answer, mails, rules=None):
                         raise ValueError
                     date.fromisoformat(deadline)
         return records
-    except (ValueError, TypeError, KeyError, AttributeError):
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
         raise InvalidExtraction("抽出JSONの形式または対象UIDの網羅性を確認できませんでした。") from None
 
 
@@ -220,7 +210,7 @@ class Pipeline:
     def request_progress(self, items, schema, cached=False):
         if schema == integrated_matching.PROFILE_SCHEMA:
             print(f"キャリアシートの情報抽出: {len(items)}人" + ("（キャッシュ使用）" if cached else ""), flush=True)
-        elif schema == integrated_matching.PROJECT_SCHEMA:
+        elif schema == integrated_matching.KEYWORD_SCHEMA:
             print(f"統合キーワードへの案件照合: {len(items)}案件" + ("（キャッシュ使用）" if cached else ""), flush=True)
         elif schema == engineer_matching.SCHEMA:
             print(f"エンジニア適合判定: {len(items)}案件" + ("（キャッシュ使用）" if cached else ""), flush=True)
@@ -234,7 +224,8 @@ class Pipeline:
             print("レポート作成：保存済みの分析結果を使用します。", flush=True)
 
     def identity(self, text, prompt, settings, schema):
-        return digest(encoded({"version": VERSION, "system": self.api.SYSTEM, "text": text,
+        version = PROFILE_CACHE_VERSION if schema == integrated_matching.PROFILE_SCHEMA else VERSION
+        return digest(encoded({"version": version, "system": self.api.SYSTEM, "text": text,
                                "prompt": prompt, "model": settings["model"],
                                "output": settings["max_output_tokens"],
                                "thinking": settings.get("thinking_level"), "schema": schema}))
@@ -448,7 +439,7 @@ class Pipeline:
             "skillsには必須・歓迎の区別、経験年数、担当工程を省略せず記載し、勤務条件も保持してください。"
             "mandatory_requirementsには必須条件を全て、一条件一項目で抽出します。"
             "requirement=条件、category=skill（技術）/experience（年数・実務・自走等）/phase（工程）/work（稼働・勤務・商流等）、"
-            "source_quote=メール本文の連続した原文引用。年数や工程を技術名にまとめず個別項目としてください。"
+            "source_quote=メール本文の連続した原文引用。年数や工程と対象技術の関係も保持してください。"
             "OR条件は選択肢を保持した一項目、AND条件は分割。歓迎・尚可条件は含めずskillsに区別して残します。"
             "必須か不明な条件も確認対象として含め、勝手に歓迎条件へ緩和しないでください。必須条件の記載がなければ空配列。"
             "抽出後、各案件を元本文と再照合し、必須条件の漏れをmandatory_requirementsに補ってから返してください。"
@@ -457,6 +448,7 @@ class Pipeline:
             "各項目は条件と数値を保って簡潔に記載し、他案件の条件やメール署名を混ぜないでください。"
             "情報がない文字列項目は空文字。創作・金額合算・外部知識による補完はしないでください。"
             "一つのメールに複数案件があれば全て抽出してください。本文が省略されたメールも判別できる情報だけ記録してください。"
+            + '\n' + integrated_matching.EXTRACTION_PROMPT
             + f"\n対象期間: {self.metadata['start_date']} ～ {self.metadata['end_date']}（日本時間）。"
             + "\n分析基準日時（開始時期の判定基準）: " + self.metadata.get("stop_at", self.metadata["end_date"])
             + "\n判定設定: " + encoded({key: self.rules[key] for key in ("ses", "contract")})
@@ -634,7 +626,7 @@ class Pipeline:
                     result.extend(self.match_part(batch, data, count, prompt, label + '_split', profile_text))
             return result
 
-    def structured_parts(self, items, prompt, schema, validator, label, fallback):
+    def structured_parts(self, items, prompt, schema, validator, label, fallback, on_completed=None):
         """Split bounded structured requests; never cache an unvalidated fallback."""
         if not items:
             return []
@@ -650,17 +642,21 @@ class Pipeline:
             try:
                 answer = self.request(batch, text, tokens, prompt, self.settings, self.report_limit,
                                       label, schema, validate)
-                result.extend(validate(answer, batch))
+                records = validate(answer, batch)
             except (InvalidExtraction, self.api.OutputLimitError) as error:
                 if len(batch) == 1:
-                    result.append(fallback(batch[0], str(error)))
+                    records = [fallback(batch[0], str(error))]
                 else:
                     middle = len(batch) // 2
-                    result.extend(self.structured_parts(batch[:middle], prompt, schema, validator, label, fallback))
-                    result.extend(self.structured_parts(batch[middle:], prompt, schema, validator, label, fallback))
+                    result.extend(self.structured_parts(batch[:middle], prompt, schema, validator, label, fallback, on_completed))
+                    result.extend(self.structured_parts(batch[middle:], prompt, schema, validator, label, fallback, on_completed))
+                    continue
+            if on_completed:
+                on_completed(records)
+            result.extend(records)
         return result
 
-    def shared_records(self, items, prompt, schema, validator, label, fallback):
+    def shared_records(self, items, prompt, schema, validator, label, fallback, progress=None):
         """Cache each validated record independently of batch membership/run path."""
         result, missing, paths = {}, [], {}
         for item in items:
@@ -674,10 +670,20 @@ class Pipeline:
                 self.metadata['reused_steps'] += 1
             except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 missing.append(item)
-        for record in self.structured_parts(missing, prompt, schema, validator, label, fallback):
-            result[record['id']] = record
-            if not record.get('_failed'):
-                atomic_json(paths[record['id']], {'record': record})
+        failed = 0
+
+        def completed(records):
+            nonlocal failed
+            for record in records:
+                result[record['id']] = record
+                failed += bool(record.get('_failed'))
+                if not record.get('_failed'):
+                    atomic_json(paths[record['id']], {'record': record})
+            if progress:
+                progress(len(result), len(items), failed)
+
+        completed([])
+        self.structured_parts(missing, prompt, schema, validator, label, fallback, completed)
         return [result[item['id']] for item in items]
 
     def rank_engineers(self, values):
@@ -714,20 +720,27 @@ class Pipeline:
         # Only the dictionary, never the person-to-keyword postings, is sent to AI.
         dictionary = [{k: entry[k] for k in ('id', 'name')} for entry in keywords]
         prompt = integrated_matching.PROJECT_PROMPT + '\nkeywords: ' + encoded(dictionary)
-        fields = ('title', 'project_id', 'skills', 'mandatory_requirements',
-                  'budget', 'start', 'location', 'contract', 'deadline_iso', 'notes')
         items = [dict(id=value.get('project_key') or digest(encoded([value['uid'], value['latest']])),
-                      project={key: value['latest'][key] for key in fields},
-                      source_body=value.get('source_body', ''),
-                      source_truncated=value.get('body_truncated', False)) for value in candidates]
+                      project=value['latest'], source_truncated=value.get('body_truncated', False))
+                 for value in candidates]
+        # Construct a separate allowlisted payload. Source text, evidence quotes,
+        # condition graphs and personal information must never enter this request.
+        keyword_items = [dict(id=item['id'], project=dict(
+            project_id=item['project']['project_id'], units=integrated_matching.matching_units(item['project'])))
+            for item in items]
 
         def project_fallback(item, error):
-            return dict(integrated_matching.pending_plan(item, '案件の構造化照合を確認できません。' + error), _failed=True)
+            return dict(id=item['id'], matches=[], _failed=True,
+                        error='案件のキーワード照合を確認できません。' + error)
 
         run_progress.report('shared_matching', count=len(items))
-        plans = self.shared_records(items, prompt, integrated_matching.PROJECT_SCHEMA,
-            lambda answer, batch: integrated_matching.validate_projects(answer, batch, dictionary),
-            'shared_projects', project_fallback)
+        links = self.shared_records(keyword_items, prompt, integrated_matching.KEYWORD_SCHEMA,
+            lambda answer, batch: integrated_matching.validate_keyword_matches(answer, batch, dictionary),
+            'shared_projects', project_fallback,
+            progress=lambda done, total, failed: run_progress.report(
+                'shared_matching_progress', done=done, total=total, failed=failed))
+        plans = [integrated_matching.assemble_plan(item['project'], link) for item, link in zip(items, links)]
+        self.api.write_json(self.output / 'keyword_matches.json', links)
         self.api.write_json(self.output / 'project_matching.json', plans)
         self.checkpoint('projects_matched')
         weights = {key: self.config['analysis'].get('matching_' + key + '_weight', default)
@@ -784,16 +797,19 @@ class Pipeline:
             self.screen_titles(connection)
             extracted = self.output / "extracted_emails.jsonl"
             extraction_state = read_cache(self.output / "extraction_complete.json")
-            if extraction_state:
+            if extraction_state.get('pipeline_version') == VERSION:
                 self.metadata.update(extraction_state)
             else:
+                self.metadata.update(extraction_chunks=0, extracted_unique_count=0,
+                                     skipped_unique_count=0, skipped_emails=[])
                 extracted = self.extract(connection)
             if (self.metadata["extracted_unique_count"] + self.metadata["skipped_unique_count"]
                     != self.metadata["analysis_target_count"]):
                 raise self.api.ToolError("選別後の全メールの構造化抽出を完了できませんでした。")
             print("メール分析が完了しました。案件情報を集計し、レポート作成に進みます。", flush=True)
             atomic_json(self.output / "extraction_complete.json", {
-                key: self.metadata[key] for key in ("extracted_unique_count", "skipped_unique_count", "skipped_emails", "extraction_chunks")})
+                'pipeline_version': VERSION, **{
+                    key: self.metadata[key] for key in ("extracted_unique_count", "skipped_unique_count", "skipped_emails", "extraction_chunks")}})
             self.checkpoint("extracted")
             opportunity_path, stats = self.aggregate(connection, extracted)
             return self.report(opportunity_path, stats)
