@@ -189,6 +189,7 @@ def send_report_cards(payloads, webhook_url, timeout):
 def prepare(config_path, checkpoint_dir, publish_dir, *, resume_dir=None, progress=None, run_period=None):
     config_path = config_path.resolve()
     config = app.load_config(config_path)
+    app.configure_logging(config)
     webhook = os.environ.get("TEAMS_WEBHOOK_URL", "").strip()
     if urlparse(webhook).scheme != "https" or not urlparse(webhook).netloc:
         raise app.ToolError("TEAMS_WEBHOOK_URL にTeams WorkflowsのHTTPS URLを設定してください。")
@@ -245,13 +246,14 @@ def prepare(config_path, checkpoint_dir, publish_dir, *, resume_dir=None, progre
     app.analysis_pipeline.atomic_json(checkpoint_dir / "pending.json", {
         "mailbox": state_path.stem, "last_run_at": metadata["stop_at"],
     })
-    print("レポートを準備しました。レポート保存・Teams通知待ちです。", flush=True)
+    app.LOGGER.info("レポートを準備しました。レポート保存・Teams通知待ちです。")
 
 
 def notify(config_path, checkpoint_dir, publish_dir, report_url, *, link_only=False):
     validate_report_url(report_url)
     config_path = config_path.resolve()
     config = app.load_config(config_path)
+    app.configure_logging(config)
     webhook = os.environ.get("TEAMS_WEBHOOK_URL", "").strip()
     if urlparse(webhook).scheme != "https" or not urlparse(webhook).netloc:
         raise app.ToolError("TEAMS_WEBHOOK_URL にTeams WorkflowsのHTTPS URLを設定してください。")
@@ -279,7 +281,7 @@ def notify(config_path, checkpoint_dir, publish_dir, report_url, *, link_only=Fa
     app.analysis_pipeline.atomic_json(checkpoint_dir / "checkpoint.json", pending)
     app.record_last_run(state_path, boundary)
     (checkpoint_dir / "pending.json").unlink()
-    print("Teamsへの通知が受理されました。チェックポイントを更新しました。", flush=True)
+    app.LOGGER.info("Teamsへの通知が受理されました。チェックポイントを更新しました。")
 
 
 def run(config_path, checkpoint_dir, publish_dir, report_url, *, link_only=False):
@@ -290,16 +292,18 @@ def run(config_path, checkpoint_dir, publish_dir, report_url, *, link_only=False
 
 def send_test_notification(config_path):
     config = app.load_config(config_path.resolve())
+    app.configure_logging(config)
     webhook = os.environ.get("TEAMS_WEBHOOK_URL", "").strip()
     if urlparse(webhook).scheme != "https" or not urlparse(webhook).netloc:
         raise app.ToolError("TEAMS_WEBHOOK_URL にTeams WorkflowsのHTTPS URLを設定してください。")
     payload = text_card_payload("【テスト投稿】ローカル環境からTeamsへの接続確認です。")
     send_card(payload, webhook, config["teams"]["timeout_seconds"])
-    print("Teams Webhookがテスト投稿を受理しました。", flush=True)
+    app.LOGGER.info("Teams Webhookがテスト投稿を受理しました。")
 
 
 def send_test_report(config_path, report_path):
     config = app.load_config(config_path.resolve())
+    app.configure_logging(config)
     webhook = os.environ.get("TEAMS_WEBHOOK_URL", "").strip()
     if urlparse(webhook).scheme != "https" or not urlparse(webhook).netloc:
         raise app.ToolError("TEAMS_WEBHOOK_URL にTeams WorkflowsのHTTPS URLを設定してください。")
@@ -312,7 +316,7 @@ def send_test_report(config_path, report_path):
     payloads = report_card_payloads("ローカルのreport.mdからのテスト投稿です。", report,
                                    title="【テスト投稿】メール分析レポート")
     send_report_cards(payloads, webhook, config["teams"]["timeout_seconds"])
-    print(f"Teams Webhookがレポートのテスト投稿（{len(payloads)}件）を受理しました。", flush=True)
+    app.LOGGER.info("Teams Webhookがレポートのテスト投稿（%s件）を受理しました。", len(payloads))
 
 
 def main():
@@ -328,6 +332,7 @@ def main():
     parser.add_argument("--report-url", default=os.environ.get("REPORT_URL", ""), help="保存済みレポートのHTTPS URL")
     parser.add_argument("--link-only", action="store_true", help="Teamsにはレポートのリンクだけを1件投稿")
     args = parser.parse_args()
+    app.configure_logging({})
     try:
         if args.test_notification:
             send_test_notification(args.config)
@@ -342,7 +347,7 @@ def main():
     except (app.ToolError, OSError, ValueError) as error:
         # Error messages from configuration validation are safe; webhook/transport
         # exceptions are already translated by post_report.
-        print(f"エラー: {error}" if isinstance(error, app.ToolError) else "エラー: 設定・状態・出力ファイルを確認してください。", file=sys.stderr)
+        app.LOGGER.error("エラー: %s", error if isinstance(error, app.ToolError) else "設定・状態・出力ファイルを確認してください。")
         return 1
     return 0
 

@@ -1,7 +1,8 @@
 # ローカル・GitHub Actions共通。認証情報は .env または環境変数で設定します。
 [logging]
-# 詳細ログの画面出力・ファイル保存の有無。false で無効にします。
-enabled = false
+# 出力する最低ログレベル。DEBUG / INFO / WARNING / ERROR / CRITICAL
+# INFO: 進捗・完了、DEBUG: IMAP接続情報やメール単位の処理も出力します。
+level = "INFO"
 
 [imap]
 port = 993

@@ -62,7 +62,6 @@ class SharePointRunTests(unittest.TestCase):
     def settings(self, source, work):
         text = Path('config.example.toml').read_text(encoding='utf-8')
         text = text.replace('priority_rules.example.md', 'priority_rules.md')
-        text = text.replace('enabled = true', 'enabled = false')
         (work / 'config.toml').write_text(text, encoding='utf-8')
         (work / 'engineers.md').write_text('## A\n\nPython', encoding='utf-8')
         runner.shutil.copyfile('priority_rules.example.md', work / 'priority_rules.md')

@@ -31,7 +31,7 @@ class IncrementalRunTests(unittest.TestCase):
         engineers.write_text('## A\n\nPython', encoding='utf-8')
         self.config["analysis"]["engineers_file"] = str(engineers)
         self.config["analysis"]["output_dir"] = str(self.root)
-        self.config["logging"]["enabled"] = False
+        self.config["logging"]["level"] = "WARNING"
         self.args = SimpleNamespace(config="config.example.toml", start=None, end=None,
                                     fetch_only=False, emails_file=None, refresh=False)
         FrozenDatetime.instant = datetime(2026, 10, 15, 9, tzinfo=app.JST)

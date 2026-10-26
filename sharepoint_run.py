@@ -216,6 +216,8 @@ def execute(store, work, run_id, resume=False):
         for name in ('config.toml', 'engineers.md', 'priority_rules.md'):
             if (work / name).exists():
                 store.put(remote + '/' + name, (work / name).read_bytes())
+    config = app.load_config(work / 'config.toml')
+    app.configure_logging(config)
     state_dir, publish = work / 'state', work / 'publish'
     if checkpoint is not None and manifest['status'] != 'notified':
         app.analysis_pipeline.atomic_json(state_dir / 'checkpoint.json', checkpoint)
@@ -242,7 +244,6 @@ def execute(store, work, run_id, resume=False):
             archive_path.unlink(missing_ok=True)
 
     if not resume:
-        config = app.load_config(work / 'config.toml')
         start, stop = app.incremental_period(config['analysis'], state_dir / 'checkpoint.json',
                                              app.datetime.now(app.JST).replace(microsecond=0))
         manifest['period'] = {'start_at': start.isoformat(), 'stop_at': stop.isoformat()}
@@ -292,6 +293,7 @@ def main():
     parser.add_argument('--progress-fd', type=int, help='File descriptor for public numeric progress')
     parser.add_argument('--log-file', type=Path, help='Detailed execution log to preserve on failure')
     args = parser.parse_args()
+    app.configure_logging({})
     store, run_id = None, None
     try:
         if args.progress_fd is not None:
@@ -309,7 +311,7 @@ def main():
         except Exception:
             # A secondary upload error must never replace the original failure.
             run_progress.report('error_save_failed')
-        print('SharePoint run failed. Resume using the saved run ID after checking settings and services.', file=sys.stderr)
+        app.LOGGER.error('SharePoint run failed. Resume using the saved run ID after checking settings and services.')
         return 1
     finally:
         if args.progress_fd is not None and run_progress.stream is not None:

@@ -8,6 +8,7 @@ import integrated_matching
 import run_progress
 import hashlib
 import json
+import logging
 import sqlite3
 import time
 import re
@@ -16,6 +17,8 @@ from datetime import date
 from email.utils import parseaddr
 from pathlib import Path
 from uuid import uuid4
+
+LOGGER = logging.getLogger("mail_analyzer.analysis")
 
 VERSION = 7
 # Quote-free profile extraction has its own cache identity.
@@ -99,7 +102,7 @@ class RateLimiter:
                 return
             wait = max(0.1, self.events[0][0] + 60.1 - now)
             run_progress.report('waiting', seconds=int(wait + 0.999))
-            print(f"Geminiの利用制限に合わせて待機中（あと約{wait:.0f}秒）。処理は継続します。", flush=True)
+            LOGGER.info(f"Geminiの利用制限に合わせて待機中（あと約{wait:.0f}秒）。処理は継続します。")
             self.sleep(min(wait, 30))
 
 
@@ -203,7 +206,7 @@ class Pipeline:
         total = self.metadata.get("analysis_target_count", self.metadata["unique_email_count"])
         percent = 100 * done / total if total else 100
         run_progress.report(event, done=done, total=total, skipped=skipped, **counts)
-        print(f"メール分析：{done:,} / {total:,}通完了（{percent:.1f}%・スキップ{skipped:,}通）｜{detail}", flush=True)
+        LOGGER.info(f"メール分析：{done:,} / {total:,}通完了（{percent:.1f}%・スキップ{skipped:,}通）｜{detail}")
 
     def preserve_extraction_failure(self, uid, reason, error, label, key):
         """Snapshot the first failure of each kind before a cancelled run loses it."""
@@ -222,17 +225,17 @@ class Pipeline:
 
     def request_progress(self, items, schema, cached=False):
         if schema == integrated_matching.PROFILE_SCHEMA:
-            print(f"キャリアシートの情報抽出: {len(items)}人" + ("（キャッシュ使用）" if cached else ""), flush=True)
+            LOGGER.info(f"キャリアシートの情報抽出: {len(items)}人" + ("（キャッシュ使用）" if cached else ""))
         elif schema == integrated_matching.KEYWORD_SCHEMA:
-            print(f"統合キーワードへの案件照合: {len(items)}案件" + ("（キャッシュ使用）" if cached else ""), flush=True)
+            LOGGER.info(f"統合キーワードへの案件照合: {len(items)}案件" + ("（キャッシュ使用）" if cached else ""))
         elif schema == title_filter.SCHEMA:
-            print(f"件名のAI選別：{len(items):,}通{'（キャッシュ使用）' if cached else ''}", flush=True)
+            LOGGER.info(f"件名のAI選別：{len(items):,}通{'（キャッシュ使用）' if cached else ''}")
         elif schema is not None:
             detail = (f"今回の{len(items):,}通は保存済みの分析結果を使用" if cached
                       else f"今回の{len(items):,}通を分析中")
             self.mail_progress(detail, 'extract_cached' if cached else 'extract_preparing', count=len(items))
         elif cached:
-            print("レポート作成：保存済みの分析結果を使用します。", flush=True)
+            LOGGER.info("レポート作成：保存済みの分析結果を使用します。")
 
     def identity(self, text, prompt, settings, schema):
         version = PROFILE_CACHE_VERSION if schema == integrated_matching.PROFILE_SCHEMA else VERSION
@@ -355,9 +358,9 @@ class Pipeline:
         unique = connection.execute("SELECT count(*) FROM mails").fetchone()[0]
         self.metadata.update(unique_email_count=unique, duplicate_email_count=total - unique)
         self.save_progress()
-        print(f"取得済みメール：{total:,}通", flush=True)
-        print(f"重複メール：{total - unique:,}通（同じ内容は1通にまとめて分析します。原文はすべて保存済み）", flush=True)
-        print(f"件名選別前のメール：{unique:,}通", flush=True)
+        LOGGER.info(f"取得済みメール：{total:,}通")
+        LOGGER.info(f"重複メール：{total - unique:,}通（同じ内容は1通にまとめて分析します。原文はすべて保存済み）")
+        LOGGER.info(f"件名選別前のメール：{unique:,}通")
 
     def screen_titles(self, connection):
         saved = read_cache(self.output / "title_selection.json")
@@ -418,9 +421,9 @@ class Pipeline:
             "uids": [row[0] for row in connection.execute("SELECT uid FROM selected ORDER BY uid")],
             "counts": counts})
         self.checkpoint("titles_filtered")
-        print(f"件名選別：機械除外 {counts['mechanical_excluded_count']:,}通 / "
+        LOGGER.info(f"件名選別：機械除外 {counts['mechanical_excluded_count']:,}通 / "
               f"AI除外 {counts['ai_excluded_count']:,}通 / 上限超過による除外 {counts['limit_excluded_count']:,}通 / "
-              f"本文分析 {counts['analysis_target_count']:,}通", flush=True)
+              f"本文分析 {counts['analysis_target_count']:,}通")
 
     def screen_part(self, items, prompt):
         def validate(answer, batch):

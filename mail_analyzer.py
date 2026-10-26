@@ -113,7 +113,7 @@ def load_config(path, *, load_environment=True, load_priority_rules=True):
         if not isinstance(config.get(section), dict):
             raise ToolError(f"設定に [{section}] が必要です。")
     allowed = {
-        "logging": {"enabled"},
+        "logging": {"level"},
         "imap": {"port", "folder", "timeout_seconds"},
         "gemini": {"model", "timeout_seconds", "max_output_tokens", "retries", "retry_base_seconds",
                    "retry_max_wait_seconds", "requests_per_minute", "input_tokens_per_minute"},
@@ -135,8 +135,8 @@ def load_config(path, *, load_environment=True, load_priority_rules=True):
     log_settings = config.setdefault("logging", {})
     if not isinstance(log_settings, dict):
         raise ToolError("logging は [logging] セクションで指定してください。")
-    if type(log_settings.setdefault("enabled", True)) is not bool:
-        raise ToolError("logging.enabled は true または false で指定してください。")
+    if log_settings.setdefault("level", "INFO") not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+        raise ToolError("logging.level は DEBUG / INFO / WARNING / ERROR / CRITICAL で指定してください。")
     if not isinstance(config["imap"].get("folder"), str) or not config["imap"]["folder"].strip():
         raise ToolError("imap.folder を設定してください。")
     for section, keys in {
@@ -287,9 +287,9 @@ def iter_fetch_mails(config, start, stop):
     def progress(operation, uid="-"):
         nonlocal stage, current_uid
         stage, current_uid = operation, uid
-        LOGGER.info("IMAP 処理=%s UID=%s", stage, safe(uid))
+        LOGGER.debug("IMAP 処理=%s UID=%s", stage, safe(uid))
 
-    LOGGER.info("IMAP 接続 host=%s port=%s timeout=%ss folder=%s SINCE=%s BEFORE=%s",
+    LOGGER.debug("IMAP 接続 host=%s port=%s timeout=%ss folder=%s SINCE=%s BEFORE=%s",
                 safe(settings["host"]), settings["port"], settings["timeout_seconds"],
                 safe(settings["folder"]), since, before)
     try:
@@ -358,7 +358,7 @@ def iter_fetch_mails(config, start, stop):
         LOGGER.error("IMAP失敗 %s", detail)
         # Stack frames only: no locals, source lines or unsanitized exception text.
         frames = traceback.extract_tb(error.__traceback__)
-        LOGGER.error("Traceback (most recent call last):\n%s", "\n".join(
+        LOGGER.debug("Traceback (most recent call last):\n%s", "\n".join(
             safe(f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}')
             for frame in frames))
         raise ToolError(f"IMAP通信またはメール解析に失敗しました。{detail}") from None
@@ -622,7 +622,7 @@ def write_report(output, metadata, summary):
     save_report_files(output, header + summary + "\n")
     metadata["status"] = "complete"
     write_json(output / "metadata.json", metadata)
-    print(f"レポートを保存しました: {output / 'report.md'}")
+    LOGGER.info("レポートを保存しました: %s", output / 'report.md')
 
 
 def write_json(path, value):
@@ -634,15 +634,13 @@ def configure_logging(config, log_file=None):
         handler.close()
     LOGGER.handlers = []
     LOGGER.propagate = False
-    LOGGER.disabled = not config.get("logging", {}).get("enabled", True)
-    if LOGGER.disabled:
-        return
+    LOGGER.disabled = False
     handlers = [logging.StreamHandler(sys.stderr)]
     if log_file:
         handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
-    LOGGER.setLevel(logging.INFO)
+    LOGGER.setLevel(config.get("logging", {}).get("level", "INFO"))
     for handler in handlers:
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        handler.setFormatter(run_progress.LogFormatter())
     LOGGER.handlers = handlers
 
 
@@ -825,14 +823,14 @@ def run(args):
             start, stop = (getattr(args, 'run_period', None)
                            or incremental_period(analysis, state_path, started_at))
             if start == stop:
-                print("前回実施時刻から新しい取得期間がないため、処理を終了します。", flush=True)
+                LOGGER.info("前回実施時刻から新しい取得期間がないため、処理を終了します。")
                 return
         saved = None if getattr(args, "refresh", False) else find_saved_mails(root, dataset_key(config, start, stop))
     if saved:
         source, source_metadata = saved
         validate_saved_mails(source, source_metadata, analysis["max_emails"])
         run_progress.report('mails_reused')
-        print("保存済みメールを使用します。メールの再取得は行いません。", flush=True)
+        LOGGER.info("保存済みメールを使用します。メールの再取得は行いません。")
     output = root / (datetime.now(JST).strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8])
     output.mkdir(parents=True, exist_ok=False)
     metadata = {"start_date": start.date().isoformat(), "end_date": (stop - timedelta(microseconds=1)).date().isoformat(),
@@ -850,7 +848,7 @@ def run(args):
         records = iter_saved_mails(saved[0]) if saved else iter_fetch_mails(config, start, stop)
         if not saved:
             run_progress.report('fetching')
-            print("IMAPから対象メールを取得し、順次ファイルに保存しています...", flush=True)
+            LOGGER.info("IMAPから対象メールを取得し、順次ファイルに保存しています...")
         with partial.open("w", encoding="utf-8") as file:
             for mail in records:
                 file.write(json.dumps(mail, ensure_ascii=False) + "\n")
@@ -883,11 +881,11 @@ def run(args):
 def finish_analysis(config, api_key, source, output, metadata, state_path, stop, args):
     analysis = config["analysis"]
     count = metadata["count"]
-    print(f"メール保存完了：{count:,}通（本文の一部を省略したメール：{metadata['truncated_bodies']:,}通）", flush=True)
-    print(f"保存先: {output}", flush=True)
+    LOGGER.info("メール保存完了：%s通（本文の一部を省略したメール：%s通）", f"{count:,}", f"{metadata['truncated_bodies']:,}")
+    LOGGER.info("保存先: %s", output)
     if args.fetch_only:
         record_last_run(state_path, stop)
-        print("取得のみ完了しました。Geminiへの送信は行っていません。")
+        LOGGER.info("取得のみ完了しました。Geminiへの送信は行っていません。")
         return
     if not count:
         write_json(output / "priority_rules.json", config["priority_rules"])
@@ -908,7 +906,7 @@ def finish_analysis(config, api_key, source, output, metadata, state_path, stop,
         record_last_run(state_path, stop)
         return output
     try:
-        print("分析の準備中...", flush=True)
+        LOGGER.info("分析の準備中...")
         if getattr(args, "progress", None):
             pipeline = analysis_pipeline.Pipeline(sys.modules[__name__], config, api_key, source, output, metadata)
             pipeline.progress = args.progress
@@ -933,18 +931,19 @@ def main():
     source_options = parser.add_mutually_exclusive_group()
     source_options.add_argument("--emails-file", help="保存済みemails.jsonl/旧emails.jsonから分析。隣のmetadata.jsonも必要")
     source_options.add_argument("--refresh", action="store_true", help="保存済みファイルを再利用せずIMAPから再取得")
-    parser.add_argument("--log-file", help="詳細ログの保存先（UTF-8、追記）。logging.enabled=true の場合のみ保存")
+    parser.add_argument("--log-file", help="ログの保存先（UTF-8、追記）。logging.level で出力レベルを設定")
     args = parser.parse_args()
+    configure_logging({})
     try:
         run(args)
     except ToolError as error:
-        print(f"エラー: {error}", file=sys.stderr)
+        LOGGER.error("エラー: %s", error)
         return 1
     except OSError:
-        print("エラー: ファイル保存または通信に失敗しました。保存先・空き容量・接続を確認してください。", file=sys.stderr)
+        LOGGER.error("エラー: ファイル保存または通信に失敗しました。保存先・空き容量・接続を確認してください。")
         return 1
     except KeyboardInterrupt:
-        print("中断しました。", file=sys.stderr)
+        LOGGER.warning("中断しました。")
         return 130
     return 0
 

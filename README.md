@@ -96,6 +96,8 @@ TEAMS_WEBHOOK_URL="Teams WorkflowsのURL"
 
 `.env` は指定した `config.toml` と同じフォルダに配置してください。GHAでは `.env` の作成は不要です。シークレットをTOMLに記載したり、Gitにコミットしたりしないでください。
 
+ログの出力レベルは `config.toml` の `[logging]` で設定します。通常は `level = "INFO"`、詳細を調べる場合は `level = "DEBUG"` にしてください。`WARNING`・`ERROR`・`CRITICAL` も指定できます。旧設定の `enabled = true/false` は削除して `level` に置き換えてください。ローカルでログを保存する場合は `python mail_analyzer.py --log-file execution.log` を実行します。
+
 ## エンジニア一覧の設定
 
 SharePointの対象フォルダ直下にある `engineers.md` を編集して、エンジニアごとに `## 名前` の見出しとプロフィールを記載してください。共通注意事項は最初のエンジニアの見出しより前に記載します。GHAでは実行のたびにこのファイルを取得します。取得や形式の検証に失敗した場合は分析を開始しません。

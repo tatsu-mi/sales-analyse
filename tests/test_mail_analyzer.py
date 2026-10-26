@@ -45,26 +45,36 @@ class MailTests(unittest.TestCase):
         screening = json.dumps({"records": [{"uid": mail["uid"], "exclude": False} for mail in mails]})
         return [screening, extraction, final]
 
-    def test_logging_enabled_controls_console_and_file(self):
+    def test_logging_level_controls_console_and_file(self):
         with tempfile.TemporaryDirectory() as temp, \
                 patch.object(app.LOGGER, "handlers", []), \
                 patch.object(app.LOGGER, "disabled", False), \
                 patch.object(app.LOGGER, "propagate", False), \
                 patch.object(app.LOGGER, "level", app.logging.INFO), \
                 patch.object(app.sys, "stderr", new_callable=io.StringIO) as stderr:
-            path = Path(temp) / "imap.log"
+            path = Path(temp) / "execution.log"
             try:
-                app.configure_logging({"logging": {"enabled": False}}, path)
-                app.LOGGER.error("disabled message")
-                self.assertEqual(stderr.getvalue(), "")
-                self.assertFalse(path.exists())
-                app.configure_logging({"logging": {"enabled": True}}, path)
-                app.LOGGER.info("ログ有効")
-                self.assertIn("ログ有効", stderr.getvalue())
-                self.assertIn("ログ有効", path.read_text(encoding="utf-8"))
-                app.configure_logging({"logging": {"enabled": False}}, path)
-                app.LOGGER.error("disabled message")
-                self.assertNotIn("disabled message", path.read_text(encoding="utf-8"))
+                for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+                    with self.subTest(level=level):
+                        stderr.seek(0)
+                        stderr.truncate()
+                        app.configure_logging({"logging": {"level": level}}, path)
+                        for message_level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+                            app.LOGGER.log(getattr(app.logging, message_level), "%s message", message_level)
+                        text = stderr.getvalue()
+                        for message_level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+                            self.assertEqual(message_level + " message" in text,
+                                             getattr(app.logging, message_level) >= getattr(app.logging, level))
+                        self.assertTrue(path.read_text(encoding="utf-8").endswith(text))
+                        for line in text.splitlines():
+                            self.assertRegex(line, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} ")
+                app.configure_logging({}, path)
+                app.LOGGER.debug("hidden detail")
+                app.LOGGER.info("progress first line\nprogress second line")
+                text = stderr.getvalue()
+                self.assertNotIn("hidden detail", text)
+                for line in text.splitlines()[-2:]:
+                    self.assertRegex(line, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO progress ")
             finally:
                 for handler in app.LOGGER.handlers:
                     handler.close()
@@ -75,14 +85,18 @@ class MailTests(unittest.TestCase):
             'priority_rules_file = "' + Path("priority_rules.example.md").resolve().as_posix() + '"')
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config.toml"
-            for enabled in ("true", "false"):
-                path.write_text(source.replace("enabled = true", f"enabled = {enabled}"), encoding="utf-8")
-                self.assertEqual(app.load_config(path)["logging"]["enabled"], enabled == "true")
-            path.write_text(source.replace("enabled = true", 'enabled = "false"'), encoding="utf-8")
-            with self.assertRaisesRegex(app.ToolError, "logging.enabled"):
+            for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+                path.write_text(source.replace('level = "INFO"', f'level = "{level}"'), encoding="utf-8")
+                self.assertEqual(app.load_config(path)["logging"]["level"], level)
+            for invalid in ('true', '10', '"TRACE"', '"info"', '[]', '{}'):
+                path.write_text(source.replace('level = "INFO"', 'level = ' + invalid), encoding="utf-8")
+                with self.assertRaisesRegex(app.ToolError, "logging.level"):
+                    app.load_config(path)
+            path.write_text(source.replace("[logging]\n", "", 1).replace('level = "INFO"', "", 1), encoding="utf-8")
+            self.assertEqual(app.load_config(path)["logging"]["level"], "INFO")
+            path.write_text(source.replace('level = "INFO"', 'enabled = true'), encoding="utf-8")
+            with self.assertRaises(app.ToolError):
                 app.load_config(path)
-            path.write_text(source.replace("[logging]\n", "", 1).replace("enabled = true", "", 1), encoding="utf-8")
-            self.assertTrue(app.load_config(path)["logging"]["enabled"])
 
     def test_password_uses_only_environment(self):
         with patch.dict(app.os.environ, {"SAKURA_MAIL_PASSWORD": "environment-password"}, clear=True):
@@ -211,10 +225,11 @@ class MailTests(unittest.TestCase):
         config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
         with patch.object(app.imaplib, "IMAP4_SSL", side_effect=OSError(11001, "getaddrinfo failed")), \
-                self.assertLogs(app.LOGGER, level="INFO") as logs:
+                self.assertLogs(app.LOGGER, level="DEBUG") as logs:
             with self.assertRaisesRegex(app.ToolError, "SSL/TLS接続.*OSError.*getaddrinfo failed"):
                 app.fetch_mails(config, start, stop)
         self.assertIn("Traceback", "\n".join(logs.output))
+        self.assertTrue(any(line.startswith("DEBUG:") and "Traceback" in line for line in logs.output))
         self.assertNotIn("test-password", "\n".join(logs.output))
 
     def test_imap_authentication_failure_redacts_credentials(self):

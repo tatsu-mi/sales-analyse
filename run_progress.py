@@ -1,6 +1,44 @@
 """Public progress contains fixed messages and numeric counts only."""
 
+import copy
+import logging
+
 stream = None
+LOGGER = logging.getLogger('mail_analyzer.progress')
+
+
+class LogFormatter(logging.Formatter):
+    """Prefix every line, including multiline diagnostics, with a timestamp."""
+
+    def __init__(self):
+        super().__init__('%(asctime)s %(levelname)s %(message)s')
+
+    def format(self, record):
+        record = copy.copy(record)
+        message = record.getMessage()
+        if record.exc_info:
+            message += '\n' + self.formatException(record.exc_info)
+        if record.stack_info:
+            message += '\n' + self.formatStack(record.stack_info)
+        record.args = ()
+        record.exc_info = record.exc_text = record.stack_info = None
+        lines = []
+        for line in message.split('\n'):
+            record.msg = line
+            lines.append(super().format(record))
+        return '\n'.join(lines)
+
+
+class PublicProgressHandler(logging.Handler):
+    def emit(self, record):
+        if stream is not None:
+            handler = logging.StreamHandler(stream)
+            handler.setFormatter(LogFormatter())
+            handler.emit(record)
+
+
+# Only this logger forwards fixed progress messages to the public descriptor.
+LOGGER.addHandler(PublicProgressHandler())
 
 MESSAGES = {
     'starting': '実行条件と保存先を準備しています。',
@@ -48,8 +86,11 @@ MESSAGES = {
 
 
 def report(event, **counts):
-    if stream is None:
-        return
     if any(type(value) is not int or value < 0 for value in counts.values()):
         raise ValueError('Progress accepts nonnegative integer counts only')
-    print('[進捗] ' + MESSAGES[event].format(**counts), file=stream, flush=True)
+    level = logging.INFO
+    if event in ('error_saved', 'error_save_failed'):
+        level = logging.ERROR
+    elif event == 'checkpoint_save_failed':
+        level = logging.WARNING
+    LOGGER.log(level, '[進捗] ' + MESSAGES[event].format(**counts))

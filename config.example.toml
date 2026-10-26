@@ -1,8 +1,9 @@
 # config.toml にコピーして使用してください。このサンプルに実際の認証情報を書かないでください。
 # IMAP接続先・認証情報、APIキー、Teams URLは .env.example を参考に .env へ設定します。
 [logging]
-# 詳細ログの画面出力・ファイル保存の有無。false で無効にします。
-enabled = true
+# 出力する最低ログレベル。DEBUG / INFO / WARNING / ERROR / CRITICAL
+# INFO: 進捗・完了、DEBUG: IMAP接続情報やメール単位の処理も出力します。
+level = "INFO"
 
 [imap]
 port = 993
