@@ -16,6 +16,7 @@ import tomllib
 import traceback
 from datetime import date, datetime, timedelta, timezone
 from email import policy
+from email.errors import MessageError
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -270,6 +271,7 @@ def iter_fetch_mails(config, start, stop):
             raise ToolError(f".envまたは環境変数 {name} を設定してください。")
     password = secret(settings, "password")
     count = 0
+    skipped = 0
     # IMAP SEARCH compares server-local calendar dates. Expand, then filter exact instants.
     since = imap_day((start - timedelta(days=1)).date())
     before = imap_day((stop + timedelta(days=1)).date())
@@ -288,6 +290,14 @@ def iter_fetch_mails(config, start, stop):
         nonlocal stage, current_uid
         stage, current_uid = operation, uid
         LOGGER.debug("IMAP 処理=%s UID=%s", stage, safe(uid))
+
+    def skip_mail(error):
+        nonlocal skipped
+        skipped += 1
+        # Parser exceptions may contain headers or body text; omit their contents.
+        reason = str(error) if isinstance(error, ToolError) else "メールデータが不正です（内容はログから除外）"
+        LOGGER.warning("IMAP メールをスキップ 処理=%s, UID=%s, %s: %s",
+                       stage, safe(current_uid), type(error).__name__, safe(reason))
 
     LOGGER.debug("IMAP 接続 host=%s port=%s timeout=%ss folder=%s SINCE=%s BEFORE=%s",
                 safe(settings["host"]), settings["port"], settings["timeout_seconds"],
@@ -315,30 +325,42 @@ def iter_fetch_mails(config, start, stop):
                     run_progress.report('mail_scan', done=index, total=len(candidates), fetched=count)
                 progress("日時・サイズ取得", uid.decode("ascii", errors="replace"))
                 data = checked(client.uid("fetch", uid, "(INTERNALDATE RFC822.SIZE)"), "日時取得")
-                metadata = b" ".join(item for item in data if isinstance(item, bytes))
-                progress("受信日時解析", current_uid)
-                received = internal_date(metadata)
-                if not start <= received < stop:
+                try:
+                    metadata = b" ".join(item for item in data if isinstance(item, bytes))
+                    progress("受信日時解析", current_uid)
+                    received = internal_date(metadata)
+                    if not start <= received < stop:
+                        continue
+                    progress("サイズ確認", current_uid)
+                    size = re.search(rb"RFC822.SIZE (\d+)", metadata)
+                    if not size:
+                        raise ToolError("メールサイズを取得できませんでした。")
+                    if int(size[1]) > limits["max_message_bytes"]:
+                        raise ToolError(f"メールサイズ={int(size[1])} bytes がmax_message_bytes={limits['max_message_bytes']}を超えました。")
+                except (ToolError, ValueError, KeyError, TypeError, IndexError, OverflowError) as error:
+                    skip_mail(error)
                     continue
-                size = re.search(rb"RFC822.SIZE (\d+)", metadata)
-                if not size:
-                    raise ToolError("メールサイズを取得できませんでした。")
-                if int(size[1]) > limits["max_message_bytes"]:
-                    raise ToolError(f"UID {uid.decode()} がmax_message_bytesを超えました。設定を増やすか期間を変更してください。")
                 progress("本文取得", current_uid)
                 data = checked(client.uid("fetch", uid, "(BODY.PEEK[])"), "本文取得")
                 raw = next((item[1] for item in data if isinstance(item, tuple)), None)
                 if raw is None:
-                    raise ToolError("検索中にメールが削除された可能性があります。再実行してください。")
+                    skip_mail(ToolError("本文を取得できませんでした。検索中にメールが削除された可能性があります。"))
+                    continue
                 progress("メール解析", current_uid)
-                message = BytesParser(policy=policy.default).parsebytes(raw)
-                body = mail_body(message)
-                mail = {"uid": uid.decode(), "received_at": received.isoformat(),
-                              "subject": str(message.get("Subject", "")),
-                              "from": str(message.get("From", "")), "to": str(message.get("To", "")),
-                              "message_id": str(message.get("Message-ID", "")),
-                              "body": body[:limits["max_body_chars"]],
-                              "body_truncated": len(body) > limits["max_body_chars"]}
+                try:
+                    message = BytesParser(policy=policy.default).parsebytes(raw)
+                    body = mail_body(message)
+                    mail = {"uid": uid.decode(), "received_at": received.isoformat(),
+                            "subject": str(message.get("Subject", "")),
+                            "from": str(message.get("From", "")), "to": str(message.get("To", "")),
+                            "message_id": str(message.get("Message-ID", "")),
+                            "body": body[:limits["max_body_chars"]],
+                            "body_truncated": len(body) > limits["max_body_chars"]}
+                except (MessageError, ValueError, KeyError, TypeError, IndexError,
+                        OverflowError, AttributeError) as error:
+                    skip_mail(error)
+                    raw = message = body = data = None
+                    continue
                 count += 1
                 yield mail
                 # Release the full MIME message before fetching the next one.
@@ -362,7 +384,7 @@ def iter_fetch_mails(config, start, stop):
             safe(f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}')
             for frame in frames))
         raise ToolError(f"IMAP通信またはメール解析に失敗しました。{detail}") from None
-    LOGGER.info("IMAP 取得完了 対象=%s件", count)
+    LOGGER.info("IMAP 取得完了 対象=%s件 スキップ=%s件", count, skipped)
 
 
 def fetch_mails(config, start, stop):

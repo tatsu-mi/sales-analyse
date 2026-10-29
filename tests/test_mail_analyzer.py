@@ -232,6 +232,70 @@ class MailTests(unittest.TestCase):
         self.assertTrue(any(line.startswith("DEBUG:") and "Traceback" in line for line in logs.output))
         self.assertNotIn("test-password", "\n".join(logs.output))
 
+    def test_imap_skips_bad_metadata_or_missing_body_and_continues(self):
+        config = self.analysis_config()
+        config["analysis"]["max_emails"] = 1
+        config["analysis"]["max_message_bytes"] = 100
+        start, stop = app.period("2026-09-01", "2026-09-01")
+        good = b'1 (INTERNALDATE "01-Sep-2026 00:00:00 +0000" RFC822.SIZE 100)'
+        cases = (
+            (good.replace(b'SIZE 100', b'SIZE 101'), False, "max_message_bytes"),
+            (good.replace(b' RFC822.SIZE 100', b''), False, "メールサイズ"),
+            (b'1 (RFC822.SIZE 100)', False, "受信日時"),
+            (good.replace(b'Sep', b'Bad'), False, "KeyError"),
+            (good.replace(b'00:00:00', b'99:00:00'), False, "ValueError"),
+            (b'', False, "受信日時"),
+            (good, True, "本文を取得できません"),
+        )
+        for metadata, missing_body, reason in cases:
+            with self.subTest(reason=reason, metadata=metadata):
+                client = MagicMock()
+                client.__enter__.return_value = client
+                client.login.return_value = client.select.return_value = ("OK", [])
+
+                def uid(command, *args):
+                    if command == "search":
+                        return "OK", [b"41 42 43"]
+                    if args[1] == "(INTERNALDATE RFC822.SIZE)":
+                        return "OK", [metadata if args[0] == b"43" else good]
+                    return "OK", [None] if missing_body and args[0] == b"43" else [
+                        (b"literal", b"Subject: valid\r\n\r\nbody")]
+
+                client.uid.side_effect = uid
+                with patch.object(app.imaplib, "IMAP4_SSL", return_value=client), \
+                        self.assertLogs(app.LOGGER, level="INFO") as logs:
+                    mails = list(app.iter_fetch_mails(config, start, stop))
+                self.assertEqual([mail["uid"] for mail in mails], ["42"])
+                output = "\n".join(logs.output)
+                self.assertIn("WARNING:mail_analyzer:IMAP メールをスキップ", output)
+                self.assertIn("UID=43", output)
+                self.assertIn(reason, output)
+                self.assertIn("対象=1件 スキップ=1件", output)
+                if not missing_body:
+                    self.assertNotIn(unittest.mock.call("fetch", b"43", "(BODY.PEEK[])"),
+                                     client.uid.call_args_list)
+                self.assertNotIn(unittest.mock.call("fetch", b"41", "(INTERNALDATE RFC822.SIZE)"),
+                                 client.uid.call_args_list)
+
+    def test_imap_fetch_transport_failures_stop_processing(self):
+        config = self.analysis_config()
+        start, stop = app.period("2026-09-01", "2026-09-01")
+        for error in (OSError("connection lost"), app.imaplib.IMAP4.abort("closed"),
+                      app.imaplib.IMAP4.error("bad command")):
+            for fetch_body in (False, True):
+                with self.subTest(error=type(error).__name__, fetch_body=fetch_body):
+                    client = MagicMock()
+                    client.__enter__.return_value = client
+                    client.login.return_value = client.select.return_value = ("OK", [])
+                    responses = [("OK", [b"42 41"])]
+                    if fetch_body:
+                        responses.append(("OK", [b'1 (INTERNALDATE "01-Sep-2026 00:00:00 +0000" RFC822.SIZE 100)']))
+                    client.uid.side_effect = responses + [error]
+                    with patch.object(app.imaplib, "IMAP4_SSL", return_value=client), \
+                            self.assertLogs(app.LOGGER, level="ERROR"), \
+                            self.assertRaises(app.ToolError):
+                        list(app.iter_fetch_mails(config, start, stop))
+
     def test_imap_authentication_failure_redacts_credentials(self):
         config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
@@ -263,7 +327,7 @@ class MailTests(unittest.TestCase):
                 app.fetch_mails(config, start, stop)
         self.assertNotIn("private mail body", "\n".join(logs.output))
 
-    def test_mail_unicode_failure_does_not_log_raw_content(self):
+    def test_mail_parse_failure_skips_and_does_not_log_raw_content(self):
         config = self.analysis_config()
         start, stop = app.period("2026-09-01", "2026-09-01")
         client = MagicMock()
@@ -271,16 +335,21 @@ class MailTests(unittest.TestCase):
         client.login.return_value = ("OK", [])
         client.select.return_value = ("OK", [b"1"])
         client.uid.side_effect = [
-            ("OK", [b"42"]),
+            ("OK", [b"42 41"]),
             ("OK", [b'1 (INTERNALDATE "01-Sep-2026 00:00:00 +0000" RFC822.SIZE 100)']),
-            ("OK", [(b"literal", b"private mail body")])]
+            ("OK", [(b"literal", b"private mail body")]),
+            ("OK", [b'1 (INTERNALDATE "01-Sep-2026 00:00:00 +0000" RFC822.SIZE 100)']),
+            ("OK", [(b"literal", b"Subject: valid\r\n\r\nbody")])]
         error = UnicodeEncodeError("ascii", "private mail body", 0, 17, "ordinal not in range(128)")
         with patch.object(app.imaplib, "IMAP4_SSL", return_value=client), \
-                patch.object(app, "mail_body", side_effect=error), \
+                patch.object(app, "mail_body", side_effect=[error, "valid body"]), \
                 self.assertLogs(app.LOGGER, level="INFO") as logs:
-            with self.assertRaisesRegex(app.ToolError, "メール解析.*UID=42.*UnicodeEncodeError.*encoding=ascii") as failure:
-                app.fetch_mails(config, start, stop)
-        self.assertNotIn("private mail body", "\n".join(logs.output) + str(failure.exception))
+            mails = app.fetch_mails(config, start, stop)
+        self.assertEqual([mail["uid"] for mail in mails], ["41"])
+        output = "\n".join(logs.output)
+        self.assertIn("メール解析, UID=42, UnicodeEncodeError", output)
+        self.assertIn("スキップ=1件", output)
+        self.assertNotIn("private mail body", output)
 
     def test_api_retry_and_key_not_in_url(self):
         settings = {"model": "test-model", "max_output_tokens": 8192, "timeout_seconds": 10, "retries": 1}

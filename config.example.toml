@@ -40,7 +40,7 @@ priority_rules_file = "priority_rules.example.md"
 max_emails = 2000
 # 1件の本文の文字数上限。超えた分は省略し、記録に明示します。
 max_body_chars = 8000
-# 添付を含むメール全体のサイズ上限（バイト）。超えた場合は停止します。
+# 添付を含むメール全体のサイズ上限（バイト）。超えたメールは警告を記録してスキップします。
 max_message_bytes = 10000000
 # 相対パスは config.toml の場所が基準です。実行ごとにサブフォルダを作成します。
 output_dir = "output"
