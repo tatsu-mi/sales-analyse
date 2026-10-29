@@ -49,13 +49,13 @@ class IncrementalRunTests(unittest.TestCase):
 
     def test_first_run_uses_configured_lookback_then_previous_boundary(self):
         first = FrozenDatetime.instant
-        (self.root / "report.md").write_text("previous report", encoding="utf-8")
+        (self.root / "report.html").write_text("previous report", encoding="utf-8")
         with patch.object(app, "iter_fetch_mails", return_value=iter([])) as fetch:
             app.run(self.args)
             self.assertEqual(fetch.call_args.args[1:],
                              (first - timedelta(hours=self.config["analysis"]["lookback_hours"]), first))
         self.assertEqual(self.last_run(), first.isoformat())
-        self.assertIn("対象メールは0件", (self.root / "report.md").read_text(encoding="utf-8"))
+        self.assertIn("対象メールは0件", (self.root / "report.html").read_text(encoding="utf-8"))
         FrozenDatetime.instant += timedelta(hours=25)
         with patch.object(app, "iter_fetch_mails", return_value=iter([])) as fetch:
             app.run(self.args)
@@ -80,13 +80,13 @@ class IncrementalRunTests(unittest.TestCase):
 
     def test_fetch_failure_keeps_previous_boundary(self):
         self.seed()
-        (self.root / "report.md").write_text("previous report", encoding="utf-8")
+        (self.root / "report.html").write_text("previous report", encoding="utf-8")
         original = self.last_run()
         with patch.object(app, "iter_fetch_mails", side_effect=app.ToolError("fetch failed")):
             with self.assertRaises(app.ToolError):
                 app.run(self.args)
         self.assertEqual(self.last_run(), original)
-        self.assertEqual((self.root / "report.md").read_text(encoding="utf-8"), "previous report")
+        self.assertEqual((self.root / "report.html").read_text(encoding="utf-8"), "previous report")
 
     def test_analysis_failure_keeps_previous_boundary_and_success_uses_start_time(self):
         self.seed()
@@ -114,7 +114,7 @@ class IncrementalRunTests(unittest.TestCase):
         with patch.object(app, "iter_fetch_mails", return_value=iter([])):
             app.run(self.args)
         self.assertEqual(self.last_run(), FrozenDatetime.instant.isoformat())
-        self.assertFalse((self.root / "report.md").exists())
+        self.assertFalse((self.root / "report.html").exists())
 
     def test_latest_report_overwrites_and_links_to_matching_history(self):
         metadata = {"start_date": "2026-10-15", "end_date": "2026-10-15",
@@ -123,13 +123,13 @@ class IncrementalRunTests(unittest.TestCase):
             output = self.root / name
             output.mkdir()
             app.write_report(output, metadata, f"{name} report")
-            history = (output / "report.md").read_text(encoding="utf-8")
-            latest = (self.root / "report.md").read_text(encoding="utf-8")
+            history = (output / "report.html").read_text(encoding="utf-8")
+            latest = (self.root / "report.html").read_text(encoding="utf-8")
             self.assertIn(f"{name} report", latest)
-            self.assertIn("](ranked_emails.json)", history)
-            self.assertIn(f"]({name}/ranked_emails.json)", latest)
+            self.assertIn('href="ranked_emails.json"', history)
+            self.assertIn(f'href="{name}/ranked_emails.json"', latest)
         self.assertNotIn("first report", latest)
-        self.assertIn("first report", (self.root / "first" / "report.md").read_text(encoding="utf-8"))
+        self.assertIn("first report", (self.root / "first" / "report.html").read_text(encoding="utf-8"))
 
     def test_saved_file_reanalysis_neither_reads_nor_updates_state(self):
         source = self.root / "source" / "emails.jsonl"

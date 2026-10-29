@@ -289,7 +289,7 @@ class ScheduledRunTests(unittest.TestCase):
                 patch.object(scheduled, 'post_report') as post:
             scheduled.prepare(self.config_path, self.checkpoint_dir, self.publish_dir)
         post.assert_not_called()
-        self.assertTrue((self.publish_dir / 'report.md').is_file())
+        self.assertTrue((self.publish_dir / 'report.html').is_file())
         self.assertTrue((self.checkpoint_dir / 'pending.json').is_file())
         self.assertEqual(self.checkpoint.read_bytes(), before)
         self.assertEqual(json.loads(self.state.read_text())['last_run_at'], '2026-10-01T09:15:00+09:00')
@@ -317,7 +317,7 @@ class ScheduledRunTests(unittest.TestCase):
         before = self.checkpoint.read_bytes()
         with patch.object(app, 'iter_fetch_mails', return_value=iter([])):
             scheduled.prepare(self.config_path, self.checkpoint_dir, self.publish_dir)
-        (self.publish_dir / 'report.md').write_text('非公開の本文\n' * 10000, encoding='utf-8')
+        (self.publish_dir / 'report.html').write_text('<main>' + '非公開の本文\n' * 10000 + '</main>', encoding='utf-8')
         # Link delivery needs neither rankings nor summaries in the Teams message.
         (self.publish_dir / 'ranked_emails.json').unlink()
         (self.publish_dir / 'priority_rules.json').unlink()
@@ -348,26 +348,26 @@ class ScheduledRunTests(unittest.TestCase):
         self.assertEqual(json.loads(self.state.read_text())['last_run_at'], '2026-10-01T09:15:00+09:00')
         self.assertTrue((self.checkpoint_dir / 'pending.json').exists())
 
-    def test_failure_on_second_part_stops_delivery_and_preserves_checkpoint(self):
+    def test_html_report_is_not_split_into_body_notifications(self):
         self.seed()
         before = self.checkpoint.read_bytes()
         with patch.object(app, 'iter_fetch_mails', return_value=iter([])):
             scheduled.prepare(self.config_path, self.checkpoint_dir, self.publish_dir)
-        (self.publish_dir / 'report.md').write_text(
-            '## SES\n' + ''.join(f'### {i}位: 案件\n' + '詳細\n' * 300 for i in range(5)),
+        (self.publish_dir / 'report.html').write_text(
+            '<main><h2>SES</h2>' + ''.join(f'<h3>{i}位: 案件</h3><p>' + '詳細<br>\n' * 300 + '</p>' for i in range(5)) + '</main>',
             encoding='utf-8')
         with patch.object(scheduled, 'MAX_CARD_BYTES', 2000), \
                 patch.object(scheduled.time, 'sleep'), \
-                patch.object(scheduled, 'send_card', side_effect=[None, app.ToolError('failed')]) as send:
-            with self.assertRaises(app.ToolError):
-                scheduled.notify(self.config_path, self.checkpoint_dir, self.publish_dir,
-                                 'https://github.com/o/r/actions/runs/1/artifacts/2')
-        self.assertEqual(send.call_count, 2)
-        self.assertEqual(self.checkpoint.read_bytes(), before)
-        self.assertEqual(json.loads(self.state.read_text())['last_run_at'], '2026-10-01T09:15:00+09:00')
-        self.assertTrue((self.checkpoint_dir / 'pending.json').exists())
+                patch.object(scheduled, 'send_card') as send:
+            scheduled.notify(self.config_path, self.checkpoint_dir, self.publish_dir,
+                             'https://example.sharepoint.com/report.html')
+        send.assert_called_once()
+        text = json.loads(send.call_args.args[0])['attachments'][0]['content']['body'][0]['text']
+        self.assertEqual(text, '[メール分析レポートを開く](https://example.sharepoint.com/report.html)')
+        self.assertNotEqual(self.checkpoint.read_bytes(), before)
+        self.assertFalse((self.checkpoint_dir / 'pending.json').exists())
 
-    def test_notification_lists_report_titles_by_category_in_rank_order(self):
+    def test_notification_contains_only_report_link(self):
         with patch.object(app, 'iter_fetch_mails', return_value=iter([])):
             scheduled.prepare(self.config_path, self.checkpoint_dir, self.publish_dir)
         ranked = {
@@ -385,11 +385,8 @@ class ScheduledRunTests(unittest.TestCase):
         text = '\n'.join(json.loads(call.args[0])['attachments'][0]['content']['body'][0]['text']
                          for call in send.call_args_list)
         self.assertIn('[メール分析レポートを開く]', text)
-        self.assertIn('保存済みSES条件（上位10件まで）', text)
-        titles = [f'{i}. {kind}案件{i}' for kind in ('ses',)
-                  for i in range(1, len(ranked[kind]) + 1)]
-        positions = [text.index(title) for title in titles]
-        self.assertEqual(positions, sorted(positions))
+        send.assert_called_once()
+        self.assertEqual(text, '[メール分析レポートを開く](https://github.com/o/r/actions/runs/1/artifacts/2)')
         self.assertNotIn('非公開予算', text)
         self.assertNotIn('非公開メール本文', text)
 
@@ -402,7 +399,7 @@ class ScheduledRunTests(unittest.TestCase):
         self.assertEqual(checkpoint['mailbox'], self.state.stem)
         self.assertEqual(json.loads(self.state.read_text())['last_run_at'], checkpoint['last_run_at'])
         self.assertEqual(sorted(p.name for p in self.publish_dir.iterdir()),
-                         ['engineer_assessments.json', 'priority_rules.json', 'ranked_emails.json', 'report.md'])
+                         ['engineer_assessments.json', 'priority_rules.json', 'ranked_emails.json', 'report.html'])
         self.seed()
         with patch.object(app, 'iter_fetch_mails', return_value=iter([])) as fetch, \
                 patch.object(scheduled, 'post_report'):

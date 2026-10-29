@@ -607,17 +607,19 @@ def upload_mail_file(settings, api_key, path):
 
 
 def save_report_files(output, content):
-    (output / "report.md").write_text(content, encoding="utf-8")
+    import html_report
+
+    (output / "report.html").write_text(html_report.render_report(content), encoding="utf-8")
     # Relative data links in the latest report must point into its history folder.
     latest_content = content
     for name in ("extracted_emails.jsonl", "opportunities.jsonl", "statistics.json",
                  "ranked_emails.json", "priority_rules.json"):
         latest_content = analysis_pipeline.prioritization.transform_report_text(
             latest_content, lambda text: text.replace(f"]({name})", f"]({output.name}/{name})"))
-    latest = output.parent / "report.md"
+    latest = output.parent / "report.html"
     temporary = latest.with_name(f"report.{uuid4().hex}.tmp")
     try:
-        temporary.write_text(latest_content, encoding="utf-8")
+        temporary.write_text(html_report.render_report(latest_content), encoding="utf-8")
         temporary.replace(latest)
     finally:
         temporary.unlink(missing_ok=True)
@@ -644,7 +646,7 @@ def write_report(output, metadata, summary):
     save_report_files(output, header + summary + "\n")
     metadata["status"] = "complete"
     write_json(output / "metadata.json", metadata)
-    LOGGER.info("レポートを保存しました: %s", output / 'report.md')
+    LOGGER.info("レポートを保存しました: %s", output / 'report.html')
 
 
 def write_json(path, value):

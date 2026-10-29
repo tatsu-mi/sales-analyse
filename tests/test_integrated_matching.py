@@ -67,7 +67,7 @@ class MatchingTests(unittest.TestCase):
         first = career(facts=[fact(('JavaScript',))])
         index = matching.build_index([first, second])
         self.assertEqual(len(index), 1)
-        self.assertEqual({p['experience'] for p in index[0]['careers']}, {'professional', 'non_professional'})
+        self.assertEqual({p['experience'] for p in index[0]['c']}, {'professional', 'non_professional'})
         self.assertNotEqual(matching.keyword_id('Java'), matching.keyword_id('JavaScript'))
         self.assertNotEqual(matching.keyword_id('C'), matching.keyword_id('C++'))
 
@@ -202,18 +202,18 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(self.assess()['state'], 'unknown')
 
     def test_keyword_matching_validates_coverage_and_dictionary_ids(self):
-        dictionary = [dict(id=matching.keyword_id('Python'), name='python')]
-        item = dict(id='X', project=dict(units=[dict(id='mandatory_1', text='Python', terms=['Python'])]))
-        record = dict(id='X', matches=[dict(requirement='mandatory_1', keywords=[])])
-        valid = matching.validate_keyword_matches(json.dumps(dict(records=[record])), [item], dictionary)
-        self.assertEqual(valid[0]['matches'][0]['keywords'], [matching.keyword_id('Python')])
-        for mutate in (lambda p: p.update(matches=[]),
-                       lambda p: p['matches'][0].update(requirement='invented'),
-                       lambda p: p['matches'][0].update(keywords=['invented'])):
+        dictionary = [dict(i=0, n='python')]
+        item = dict(i=0, u=[dict(t='Python', k=['Python'])])
+        record = dict(i=0, m=[[]])
+        valid = matching.validate_keyword_matches(json.dumps(dict(r=[record])), [item], dictionary)
+        self.assertEqual(valid, [dict(i=0, m=[[0]])])
+        for mutate in (lambda p: p.update(m=[]), lambda p: p.update(i=1),
+                       lambda p: p.update(m=[['invented']]), lambda p: p.update(m=[[1]]),
+                       lambda p: p.update(m=[[True]]), lambda p: p.update(i=False)):
             bad = copy.deepcopy(record)
             mutate(bad)
             with self.assertRaises(ValueError):
-                matching.validate_keyword_matches(json.dumps(dict(records=[bad])), [item], dictionary)
+                matching.validate_keyword_matches(json.dumps(dict(r=[bad])), [item], dictionary)
 
     def test_structure_validates_conditions_without_source_evidence(self):
         project = dict(mandatory_requirements=[dict(requirement='Python', category='skill',

@@ -209,7 +209,6 @@ def render_report(ranked, rules):
             project = entry["latest"]
             lines += [f"### {entry['rank']}位: {text(project['title'])}", "",
                       f"判定: {entry['verification']}（共通条件の適合 {entry['matches']}/{entry['total_criteria']}）  ",
-                      render_source_mail(entry['source_email']), "",
                       f"送信元: {text(entry['sender'])} / 問い合わせ先: {text(project['contact'])}  ",
                       f"単価・予算: {text(project['budget'])} / 開始・期間: {text(project['start'])}  ",
                       f"勤務地・勤務条件: {text(project['location'])} / スキル: {text(', '.join(project['skills']))}  ",
@@ -244,5 +243,6 @@ def render_report(ranked, rules):
             pending = (any(check["state"] == "unknown" for check in project["assessments"])
                        or entry.get("engineer_match", {}).get("state") == "unknown")
             action = "未確認の案件条件を問い合わせる" if pending else "募集継続・参画体制を確認してアプローチする"
-            lines += ["", f"次の対応: {action}。", ""]
+            lines += ["", f"次の対応: {action}。", "",
+                      render_source_mail(entry['source_email']), ""]
     return "\n".join(lines)

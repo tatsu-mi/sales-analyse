@@ -24,6 +24,11 @@ VERSION = 7
 # Quote-free profile extraction has its own cache identity.
 PROFILE_CACHE_VERSION = 7
 MAX_ANALYSIS_EMAILS = 1000
+# Matching responses repeat every requirement, even when the input is compact.
+KEYWORD_MATCH_MAX_UNITS = 64
+KEYWORD_MATCH_TOKENS_PER_UNIT = 128
+
+
 KINDS = ("ses", "other")
 TEXT_FIELDS = ("title", "project_id", "contact", "budget", "start", "location", "contract",
                "deadline_iso", "notes")
@@ -157,6 +162,7 @@ class Pipeline:
         self.source, self.output, self.metadata = source, output, metadata
         self.rules = config["priority_rules"]
         self.profiles = None
+        self.required_cached_steps = set()
         if "engineers_file" in config["analysis"]:
             try:
                 self.profiles = engineer_matching.load_profiles(config["analysis"]["engineers_file"])
@@ -255,14 +261,20 @@ class Pipeline:
         return tokens
 
     def groups(self, items, prompt, settings, limit, schema=None):
-        pending, size = [], 0
+        pending, size, units = [], 0, 0
+        keyword_matching = schema == integrated_matching.KEYWORD_SCHEMA
+        unit_limit = min(KEYWORD_MATCH_MAX_UNITS,
+                         max(1, settings['max_output_tokens'] // KEYWORD_MATCH_TOKENS_PER_UNIT))
         for item in items:
             line = encoded(item) + "\n"
-            if pending and size + len(line.encode("utf-8")) > limit * 2:
+            item_units = len(item['u']) if keyword_matching else 0
+            if pending and (size + len(line.encode("utf-8")) > limit * 2
+                            or keyword_matching and units + item_units > unit_limit):
                 yield from self.fit(pending, prompt, settings, limit, schema)
-                pending, size = [], 0
+                pending, size, units = [], 0, 0
             pending.append(item)
             size += len(line.encode("utf-8"))
+            units += item_units
         if pending:
             yield from self.fit(pending, prompt, settings, limit, schema)
 
@@ -629,12 +641,17 @@ class Pipeline:
                                       label, schema, validate)
                 records = validate(answer, batch)
             except (InvalidExtraction, self.api.OutputLimitError) as error:
+                if schema == integrated_matching.KEYWORD_SCHEMA:
+                    LOGGER.warning('案件照合の応答を検証できないか出力上限に達しました（%s案件）: %s',
+                                   len(batch), error)
                 if len(batch) == 1:
                     records = [fallback(batch[0], str(error))]
                 else:
                     middle = len(batch) // 2
-                    result.extend(self.structured_parts(batch[:middle], prompt, schema, validator, label, fallback, on_completed))
-                    result.extend(self.structured_parts(batch[middle:], prompt, schema, validator, label, fallback, on_completed))
+                    result.extend(self.structured_parts(batch[:middle], prompt, schema, validator, label, fallback,
+                                                        on_completed))
+                    result.extend(self.structured_parts(batch[middle:], prompt, schema, validator, label, fallback,
+                                                        on_completed))
                     continue
             if on_completed:
                 on_completed(records)
@@ -644,32 +661,38 @@ class Pipeline:
     def shared_records(self, items, prompt, schema, validator, label, fallback, progress=None):
         """Cache each validated record independently of batch membership/run path."""
         result, missing, paths = {}, [], {}
+        id_key, root_key = ('i', 'r') if schema == integrated_matching.KEYWORD_SCHEMA else ('id', 'records')
         for item in items:
             key = self.identity(encoded(item), prompt, self.settings, schema)
             path = self.cache / label / (key + '.json')
-            paths[item['id']] = path
+            paths[item[id_key]] = path
             saved = read_cache(path)
             try:
-                record = validator(encoded({'records': [saved['record']]}), [item])[0]
-                result[item['id']] = record
+                record = validator(encoded({root_key: [saved['record']]}), [item])[0]
+                result[item[id_key]] = record
                 self.metadata['reused_steps'] += 1
             except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
                 missing.append(item)
+        if missing and label in self.required_cached_steps:
+            stage = 'profiles' if label == 'career_facts' else 'matching'
+            raise self.api.ToolError(
+                f'再開に必要な {label} の保存結果が不足しているか、現在の設定と一致しません。'
+                f'--start-from {stage} から実行してください。')
         failed = 0
 
         def completed(records):
             nonlocal failed
             for record in records:
-                result[record['id']] = record
+                result[record[id_key]] = record
                 failed += bool(record.get('_failed'))
                 if not record.get('_failed'):
-                    atomic_json(paths[record['id']], {'record': record})
+                    atomic_json(paths[record[id_key]], {'record': record})
             if progress:
                 progress(len(result), len(items), failed)
 
         completed([])
         self.structured_parts(missing, prompt, schema, validator, label, fallback, completed)
-        return [result[item['id']] for item in items]
+        return [result[item[id_key]] for item in items]
 
     def rank_engineers(self, values):
         candidates = []
@@ -703,19 +726,23 @@ class Pipeline:
         self.api.write_json(self.output / 'integrated_skills.json', keywords)
         self.checkpoint('skills_integrated')
         # Only the dictionary, never the person-to-keyword postings, is sent to AI.
-        dictionary = [{k: entry[k] for k in ('id', 'name')} for entry in keywords]
-        prompt = integrated_matching.PROJECT_PROMPT + '\nkeywords: ' + encoded(dictionary)
-        items = [dict(id=value.get('project_key') or digest(encoded([value['uid'], value['latest']])),
+        dictionary = [{k: entry[k] for k in ('i', 'n')} for entry in keywords]
+        keyword_ids = {entry['n']: entry['i'] for entry in dictionary}
+        prompt = integrated_matching.PROJECT_PROMPT + '\nk: ' + encoded(dictionary)
+        items = [dict(id=i,
                       project=value['latest'], source_truncated=value.get('body_truncated', False))
-                 for value in candidates]
+                 for i, value in enumerate(candidates)]
+        self.api.write_json(self.output / 'keyword_projects.json', [
+            dict(i=item['id'], u=value['uid'], p=value['latest']['project_id'], k=value.get('project_key', ''))
+            for item, value in zip(items, candidates)])
         # Construct a separate allowlisted payload. Source text, evidence quotes,
         # condition graphs and personal information must never enter this request.
-        keyword_items = [dict(id=item['id'], project=dict(
-            project_id=item['project']['project_id'], units=integrated_matching.matching_units(item['project'])))
+        keyword_items = [dict(i=item['id'], u=[dict(t=unit['text'], k=unit['terms'])
+                                             for unit in integrated_matching.matching_units(item['project'])])
             for item in items]
 
         def project_fallback(item, error):
-            return dict(id=item['id'], matches=[], _failed=True,
+            return dict(i=item['i'], m=[], _failed=True,
                         error='案件のキーワード照合を確認できません。' + error)
 
         run_progress.report('shared_matching', count=len(items))
@@ -738,7 +765,7 @@ class Pipeline:
         result, audit = [], []
         for index, (profile, facts) in enumerate(zip(self.profiles, structured), 1):
             eligible = []
-            factors = integrated_matching.keyword_factors(facts)
+            factors = integrated_matching.keyword_factors(facts, keyword_ids)
             run_progress.report('engineer_start', index=index, total=len(self.profiles), count=len(candidates))
             for value, item, plan in zip(candidates, items, plans):
                 linked = {key for req in plan['requirements'] + plan['additional_requirements'] for key in req['keywords']}
@@ -746,7 +773,7 @@ class Pipeline:
                 if (not (linked & factors.keys()) and not facts.get('_failed') and not plan.get('_failed')
                         and plan['complete'] and facts['complete']):
                     continue
-                check = integrated_matching.assess(plan, item, facts, today, weights)
+                check = integrated_matching.assess(plan, item, facts, today, weights, keyword_ids)
                 if check['state'] == 'match' and not all(c['state'] == 'match' for c in value['latest']['assessments']):
                     check['state'] = 'unknown'
                     check['evidence'] += ' 共通条件に未確認項目があります。'

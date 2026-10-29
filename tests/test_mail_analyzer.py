@@ -512,7 +512,7 @@ class MailTests(unittest.TestCase):
             generate.assert_not_called()
             run_dir = next(Path(temp).glob("*/metadata.json")).parent
             self.assertTrue((run_dir / "emails.jsonl").exists())
-            self.assertFalse((run_dir / "report.md").exists())
+            self.assertFalse((run_dir / "report.html").exists())
 
     def test_mails_and_aggregated_report_are_sent_as_files(self):
         config = self.analysis_config()
@@ -532,7 +532,7 @@ class MailTests(unittest.TestCase):
                 self.assertTrue(all(set(item) == {"uid", "subject"} for item in titles))
                 self.assertEqual(list(app.iter_saved_mails(upload.call_args_list[-1][0][2])), mails)
             run_dir = next(Path(temp).glob("*/metadata.json")).parent
-            self.assertIn("該当候補はありません", (run_dir / "report.md").read_text(encoding="utf-8"))
+            self.assertIn("該当候補はありません", (run_dir / "report.html").read_text(encoding="utf-8"))
             meta = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(meta["status"], "complete")
             self.assertEqual(meta["truncated_bodies"], 1)
@@ -690,7 +690,7 @@ class MailTests(unittest.TestCase):
             run_dir = next(Path(temp).glob("*/metadata.json")).parent
             self.assertEqual(list(app.iter_saved_mails(run_dir / "emails.jsonl")), mails)
             self.assertEqual(json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))["status"], "analysis_failed")
-            self.assertFalse((run_dir / "report.md").exists())
+            self.assertFalse((run_dir / "report.html").exists())
 
 
 if __name__ == "__main__":

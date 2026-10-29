@@ -1,4 +1,4 @@
-"""Prepare a report, post it to Teams in project-sized parts, then commit the checkpoint."""
+"""Prepare an HTML report, post its link to Teams, then commit the checkpoint."""
 import argparse
 import json
 import os
@@ -229,11 +229,11 @@ def prepare(config_path, checkpoint_dir, publish_dir, *, resume_dir=None, progre
             state_path.write_bytes(previous_state)
     if output is None:
         raise app.ToolError("新しい取得期間がありません。チェックポイントは更新しません。")
-    report = (output / "report.md").read_text(encoding="utf-8")
+    report = (output / "report.html").read_text(encoding="utf-8")
     if not report.strip():
         raise app.ToolError("レポートが空のため処理を停止します。")
     publish_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("report.md", "ranked_emails.json", "priority_rules.json"):
+    for name in ("report.html", "ranked_emails.json", "priority_rules.json"):
         shutil.copy2(output / name, publish_dir / name)
     statistics = output / 'statistics.json'
     if statistics.is_file():
@@ -269,15 +269,10 @@ def notify(config_path, checkpoint_dir, publish_dir, report_url, *, link_only=Fa
             raise ValueError
     except (KeyError, ValueError, TypeError):
         raise app.ToolError("通知待ちレポートの状態が不正です。") from None
-    report = (publish_dir / "report.md").read_text(encoding="utf-8")
+    report = (publish_dir / "report.html").read_text(encoding="utf-8")
     if not report.strip():
         raise app.ToolError("レポートが空のため通知を停止します。")
-    if link_only:
-        post_report(report_url, webhook, config["teams"]["timeout_seconds"])
-    else:
-        ranked = app.read_metadata(publish_dir / "ranked_emails.json")
-        rules = app.read_metadata(publish_dir / "priority_rules.json")
-        post_report(report_url, webhook, config["teams"]["timeout_seconds"], ranked, rules, report=report)
+    post_report(report_url, webhook, config["teams"]["timeout_seconds"])
     app.analysis_pipeline.atomic_json(checkpoint_dir / "checkpoint.json", pending)
     app.record_last_run(state_path, boundary)
     (checkpoint_dir / "pending.json").unlink()

@@ -160,9 +160,9 @@ class SourceMailTests(unittest.TestCase):
             output = Path(temp) / 'run'
             output.mkdir()
             app.save_report_files(output, '[集計](ranked_emails.json)\n\n' + source)
-            latest = (Path(temp) / 'report.md').read_text(encoding='utf-8')
-            self.assertIn('[集計](run/ranked_emails.json)', latest)
-            self.assertIn(source, latest)
+            latest = (Path(temp) / 'report.html').read_text(encoding='utf-8')
+            self.assertIn('href="run/ranked_emails.json"', latest)
+            self.assertIn('[元の資料](ranked_emails.json)', latest)
 
     def test_report_uses_source_mail_in_place_of_uid_row(self):
         fixture = PriorityTests()

@@ -150,8 +150,8 @@ class PipelineTests(unittest.TestCase):
                                                duration_kind='unknown')]) for item in items]
             else:
                 self.assertNotIn('転載用の本文', pipeline.encoded(items))
-                rows = [dict(id=item['id'], matches=[dict(requirement=u['id'], keywords=[])
-                        for u in item['project']['units']]) for item in items]
+                rows = [dict(i=item['i'], m=[[] for u in item['u']]) for item in items]
+                return json.dumps(dict(r=rows))
             return json.dumps(dict(records=rows))
 
         self.api.generate = generate
@@ -355,7 +355,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(any(path.read_text(encoding='utf-8') == '{invalid json'
                             for path in instance.work.glob('*.result.txt')))
         app.write_report(instance.output, instance.metadata, summary)
-        self.assertIn('抽出失敗によるスキップ: 1 件', (instance.output / 'report.md').read_text(encoding='utf-8'))
+        self.assertIn('抽出失敗によるスキップ: 1 件', (instance.output / 'report.html').read_text(encoding='utf-8'))
 
         self.calls.clear()
         second = self.make(mails)
@@ -494,7 +494,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(stats['analysis_target_count'], 1000)
         app.write_report(instance.output, instance.metadata, report)
         self.assertIn('上限超過による除外: 2 件',
-                      (instance.output / 'report.md').read_text(encoding='utf-8'))
+                      (instance.output / 'report.html').read_text(encoding='utf-8'))
 
     def test_report_embeds_latest_source_mail_without_ai_or_rewriting_it(self):
         self.extracted = {'1': [opportunity()], '2': [opportunity()]}

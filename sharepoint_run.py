@@ -30,20 +30,46 @@ class Store:
                      + '/items/' + quote(folder, safe=''))
 
     def request(self, method, path, data=None, missing=False):
-        token = subprocess.run([
-            'az', 'account', 'get-access-token', '--resource', 'https://graph.microsoft.com/',
-            '--query', 'accessToken', '--output', 'tsv'], capture_output=True, text=True, check=True).stdout.strip()
+        token = sharepoint_reports.run_az([
+            'account', 'get-access-token', '--resource', 'https://graph.microsoft.com/',
+            '--query', 'accessToken', '--output', 'tsv']).stdout.strip()
         request = Request(self.base + ':/' + quote(path, safe='/') + ':/content',
                           data=data, method=method, headers={
-                              'Authorization': 'Bearer ' + token,
-                              'Content-Type': 'application/octet-stream'})
+                              'Content-Type': ('text/html; charset=utf-8' if path.endswith('.html')
+                                               else 'application/octet-stream')})
+        # Never forward the Graph token to another download host.
+        request.add_unredirected_header('Authorization', 'Bearer ' + token)
         try:
             with urlopen(request, timeout=180) as response:
                 return response.read()
         except HTTPError as error:
             if missing and error.code == 404:
                 return None
+            if (method == 'GET' and error.code == 401
+                    and urlsplit(error.url).hostname != 'graph.microsoft.com'):
+                # Some tenants return download redirects without tempauth.
+                # contentStream keeps authentication and bytes on Graph.
+                error.close()
+                try:
+                    return self.download_stream(path, token)
+                except HTTPError as stream_error:
+                    if missing and stream_error.code == 404:
+                        return None
+                    raise app.ToolError(
+                        f'SharePoint direct download failed (HTTP {stream_error.code}, GET).') from stream_error
             raise app.ToolError(f'SharePoint state transfer failed (HTTP {error.code}, {method}).') from error
+
+    def download_stream(self, path, token):
+        """Fallback for rejected redirects; contentStream currently requires beta."""
+        request = Request(self.base + ':/' + quote(path, safe='/') + '?$select=id')
+        request.add_unredirected_header('Authorization', 'Bearer ' + token)
+        with urlopen(request, timeout=180) as response:
+            item = json.load(response)
+        drive = self.base.split('/items/', 1)[0].replace('/v1.0/', '/beta/', 1)
+        request = Request(drive + '/items/' + quote(item['id'], safe='') + '/contentStream')
+        request.add_unredirected_header('Authorization', 'Bearer ' + token)
+        with urlopen(request, timeout=180) as response:
+            return response.read()
 
     def folder(self, parent, name):
         base = self.base if not parent else self.base + ':/' + quote(parent, safe='/')
@@ -271,7 +297,7 @@ def execute(store, work, run_id, resume=False):
         run_progress.report('publishing')
         sharepoint_reports.ensure_reports_folder(os.environ['DRIVE_ID'], os.environ['FOLDER_ID'])
         # Use the same authenticated binary transfer for reports.
-        item = store.put('reports/report-' + run_id + '.md', (publish / 'report.md').read_bytes())
+        item = store.put('reports/report-' + run_id + '.html', (publish / 'report.html').read_bytes())
         manifest['report_url'] = item['webUrl']
         scheduled_run.validate_report_url(manifest['report_url'])
         save(output, 'report_uploaded')

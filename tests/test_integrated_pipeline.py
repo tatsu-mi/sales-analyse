@@ -64,13 +64,15 @@ class IntegratedPipelineTests(unittest.TestCase):
             # Individual information must never appear in a project request.
             self.assertNotIn('career_', args[2])
             self.assertNotIn('personal-feedback', args[2])
-            records = [dict(id=item['id'], matches=[dict(requirement=u['id'],
-                keywords=[matching.keyword_id('Python')] if 'python' in u['terms'] else [])
-                for u in item['project']['units']]) for item in items]
+            dictionary = {entry['n']: entry['i'] for entry in json.loads(args[2].split('\nk: ', 1)[1])}
+            records = [dict(i=item['i'], m=[
+                [dictionary['python']] if 'python' in u['k'] else [] for u in item['u']]) for item in items]
             for record, item in zip(records, items):
-                if item['project']['project_id'] == self.invalid_project:
-                    record['matches'] = []
-        return json.dumps(dict(records=records))
+                if self.invalid_project is not None:
+                    projects = json.loads((self.instance.output / 'keyword_projects.json').read_text(encoding='utf-8'))
+                    if projects[item['i']]['p'] == self.invalid_project:
+                        record['m'] = []
+        return json.dumps({'r' if schema == matching.KEYWORD_SCHEMA else 'records': records})
 
     def setup_projects(self, count=2, contract=False):
         self.h.extracted = {str(i): [harness.opportunity(project_id=f'P-{i}')] for i in range(count)}
@@ -84,6 +86,7 @@ class IntegratedPipelineTests(unittest.TestCase):
 
     def make(self, mails, profiles=None):
         instance = self.h.make(mails)
+        self.instance = instance
         instance.profiles = profiles if profiles is not None else [
             dict(file=name, name=name, sha256=name, text='Python', feedback='personal-feedback')
             for name in ('A', 'B')]
@@ -102,7 +105,7 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.assertEqual(completed.kwargs['skipped'], 0)
         self.assertEqual(len(self.profile_calls), 2)
         self.assertEqual(len(self.project_calls), 15)
-        self.assertTrue(all('assessments' not in item['project'] for item in self.project_calls))
+        self.assertTrue(all(set(item) == {'i', 'u'} for item in self.project_calls))
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         self.assertEqual([len(g['entries']) for g in ranked['ses_by_engineer']], [10, 10])
         self.assertNotIn('contract', ranked)
@@ -130,10 +133,9 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.assertNotIn(marker, pipeline.encoded(requirement))
         self.assertEqual(len(self.project_calls), 1)
         payload = self.project_calls[0]
-        self.assertEqual(set(payload), {'id', 'project'})
-        self.assertEqual(set(payload['project']), {'project_id', 'units'})
-        for unit in payload['project']['units']:
-            self.assertEqual(set(unit), {'id', 'text', 'terms'})
+        self.assertEqual(set(payload), {'i', 'u'})
+        for unit in payload['u']:
+            self.assertEqual(set(unit), {'t', 'k'})
         serialized = pipeline.encoded(payload)
         self.assertNotIn(marker, serialized)
         for forbidden in ('source_body', 'source_quote', 'nodes', 'commute', 'assessments'):
@@ -152,6 +154,22 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.assertEqual(instance.identity(pipeline.encoded(item), matching.PROFILE_PROMPT,
                                          instance.settings, matching.PROFILE_SCHEMA), expected)
 
+    def test_compact_matches_are_saved_and_used_without_expanding_ids_or_keys(self):
+        instance = self.make(self.setup_projects(1))
+        instance.run()
+        links = json.loads((instance.output / 'keyword_matches.json').read_text(encoding='utf-8'))
+        self.assertEqual(links, [dict(i=0, m=[[0]])])
+        keywords = json.loads((instance.output / 'integrated_skills.json').read_text(encoding='utf-8'))
+        self.assertEqual([(entry['i'], entry['n']) for entry in keywords], [(0, 'python')])
+        projects = json.loads((instance.output / 'keyword_projects.json').read_text(encoding='utf-8'))
+        self.assertEqual((projects[0]['i'], projects[0]['u'], projects[0]['p']), (0, '0', 'P-0'))
+        plans = json.loads((instance.output / 'project_matching.json').read_text(encoding='utf-8'))
+        self.assertEqual(plans[0]['requirements'][0]['keywords'], [0])
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        score = ranked['ses_by_engineer'][0]['entries'][0]['engineer_match']
+        self.assertEqual(score['score'], 10)
+        self.assertEqual(score['score_breakdown'][0]['keyword_names'], ['python'])
+
     def test_preferences_extracted_upfront_keep_nonprofessional_weight(self):
         mails = self.setup_projects(1)
         mails[0]['body'] += ' Java'
@@ -165,8 +183,7 @@ class IntegratedPipelineTests(unittest.TestCase):
         score = ranked['ses_by_engineer'][0]['entries'][0]['engineer_match']
         self.assertEqual(score['score'], 10.5)
         self.assertEqual(score['score_breakdown'][1]['factor'], 0.1)
-        self.assertEqual([u['id'] for u in self.project_calls[0]['project']['units']],
-                         ['mandatory_1', 'welcome-java'])
+        self.assertEqual([u['k'] for u in self.project_calls[0]['u']], [['python'], ['Java']])
 
     def test_changed_person_and_weights_reuse_shared_matches_across_runs(self):
         mails = self.setup_projects()
@@ -201,7 +218,7 @@ class IntegratedPipelineTests(unittest.TestCase):
         instance.run()
         self.assertEqual(len(self.project_calls), 2)
         keywords = json.loads((instance.output / 'integrated_skills.json').read_text(encoding='utf-8'))
-        self.assertEqual({k['name'] for k in keywords}, {'python', 'java'})
+        self.assertEqual({k['n'] for k in keywords}, {'python', 'java'})
 
     def test_resume_reuses_extraction_and_shared_matching_after_first_person(self):
         instance = self.make(self.setup_projects())
@@ -235,7 +252,7 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.invalid_project = None
         self.project_calls.clear()
         self.make(mails).run()
-        self.assertEqual([item['project']['project_id'] for item in self.project_calls], ['P-0'])
+        self.assertEqual([item['i'] for item in self.project_calls], [0])
 
     def test_shared_rules_filter_before_matching_and_unknowns_stay_pending(self):
         mails = self.setup_projects()
@@ -243,7 +260,7 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.h.extracted['1'][0]['assessments'][0].update(state='unknown', evidence='共通条件が不明')
         instance = self.make(mails)
         instance.run()
-        self.assertEqual([p['project']['project_id'] for p in self.project_calls], ['P-1'])
+        self.assertEqual([p['i'] for p in self.project_calls], [0])
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         for group in ranked['ses_by_engineer']:
             self.assertEqual([r['uid'] for r in group['entries']], ['1'])
@@ -295,6 +312,56 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.assertEqual(updates, [dict(done=i, total=3, failed=0) for i in range(4)])
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         self.assertEqual([len(g['entries']) for g in ranked['ses_by_engineer']], [3, 3])
+
+    def test_project_batches_can_exceed_ten_and_still_match_every_project(self):
+        instance = self.make(self.setup_projects(156))
+        instance.report_limit = 60000
+        with patch.object(instance, 'request', wraps=instance.request) as request:
+            instance.run()
+        sizes = [len(call.args[0]) for call in request.call_args_list
+                 if call.args[7] == matching.KEYWORD_SCHEMA]
+        self.assertEqual(sizes, [64, 64, 28])
+        self.assertEqual(sum(sizes), 156)
+        self.assertEqual(len({item['i'] for item in self.project_calls}), 156)
+
+    def test_split_does_not_change_size_of_later_batches(self):
+        instance = self.make(self.setup_projects(128))
+        instance.report_limit = 60000
+        attempts = []
+        original = instance.api.generate
+
+        def generate(*args, **kwargs):
+            if kwargs.get('response_schema') == matching.KEYWORD_SCHEMA:
+                count = len(self.h.uploads[kwargs['file_data']['uri']].splitlines())
+                attempts.append(count)
+                if count > 32:
+                    raise instance.api.OutputLimitError('truncated')
+            return original(*args, **kwargs)
+
+        with patch.object(instance.api, 'generate', side_effect=generate):
+            instance.run()
+        self.assertEqual(attempts, [64, 32, 32, 64, 32, 32])
+        self.assertEqual(len({item['i'] for item in self.project_calls}), 128)
+
+    def test_answer_cache_reuses_shared_batch_without_sending_again(self):
+        instance = self.make(self.setup_projects(1))
+        items = [dict(i=0, u=[])]
+        validator = lambda answer, data: matching.validate_keyword_matches(answer, data, [])
+        fallback = lambda item, error: self.fail('unexpected fallback: ' + error)
+        for _ in range(2):
+            instance.structured_parts(items, matching.PROJECT_PROMPT + '\nk: []', matching.KEYWORD_SCHEMA,
+                                      validator, 'shared_projects', fallback)
+        self.assertEqual(len(self.project_calls), 1)
+
+    def test_keyword_groups_also_limit_requirements_and_respect_output_budget(self):
+        instance = self.make(self.setup_projects(1))
+        items = [dict(i=i, u=[{}] * 30) for i in range(5)]
+        settings = dict(instance.settings, max_output_tokens=16384)
+        groups = list(instance.groups(items, 'prompt', settings, instance.report_limit, matching.KEYWORD_SCHEMA))
+        self.assertEqual([len(batch) for batch, _, _ in groups], [2, 2, 1])
+        settings['max_output_tokens'] = 4096
+        groups = list(instance.groups(items, 'prompt', settings, instance.report_limit, matching.KEYWORD_SCHEMA))
+        self.assertEqual([len(batch) for batch, _, _ in groups], [1] * 5)
 
     def test_shared_progress_counts_cached_records_and_failed_pending_records(self):
         mails = self.setup_projects(3)

@@ -1,150 +1,98 @@
-﻿# 営業メール分析ツール
+# 営業メール分析ツール
 
-## ローカルでの実行
+## セットアップ
 
-Python 3.11以上を使用します。リポジトリのフォルダで以下を実行します（PowerShellの例）。
+Python 3.11以上。PowerShellで実行します。
 
 ```powershell
-Copy-Item .env.example .env
 python -m pip install -r requirements.txt
-notepad .env
-notepad config.toml
-python validate_config.py
-python mail_analyzer.py
+Copy-Item .env.example .env
 ```
 
-`.env` に設定する値は「シークレット」を参照してください。実行後は `output/report.md` を確認してください。
+`config.toml` と同じフォルダの `.env` を編集します。
 
-必要に応じて次のコマンドを使います。
-
-```powershell
-# メール取得のみ（Gemini APIキー不要）
-python mail_analyzer.py --fetch-only
-
-# 期間を指定して分析（開始日・終了日を含む、日本時間）
-python mail_analyzer.py --start 2026-10-01 --end 2026-10-15
-
-# 別の設定ファイルで実行
-python mail_analyzer.py --config path/to/config.toml
-
-# Teamsへのテスト投稿（TEAMS_WEBHOOK_URLのみ必要）
-python scheduled_run.py --test-notification
-
-# ローカルのレポート全文をTeamsへ分割テスト投稿
-python scheduled_run.py --test-report output/report.md
-
-# 任意のレポートファイル・設定ファイルを指定
-python scheduled_run.py --config config.toml --test-report "path/to/report.md"
-```
-
-Teamsのテスト投稿後は投稿先チャネルで表示を確認してください。`--test-report` にはUTF-8のMarkdownファイルを指定してください。
-
-## GitHub Actions（GHA）での手動実行
-
-1. GitHubの **Settings → Secrets and variables → Actions → Repository secrets** に「シークレット」の値を登録します。
-2. 下記の「SharePointへの接続設定」を完了します。
-3. **Actions → Mail analysis and Teams report → Run workflow** を開きます。
-4. デフォルトブランチを選び、**Run workflow** をクリックします。
-5. 実行結果とTeamsに投稿されたリンクを開き、SharePointのレポートを確認します。
-
-途中で失敗した場合は **Actions → Resume mail analysis → Run workflow** を開き、デフォルトブランチを選んで `run_id` に元の実行の `GitHub実行ID-試行回数`（例：`123456789-1`）を入力してください。通常ワークフローの失敗メッセージにもこのIDを表示します。再開が失敗した場合も同じIDを指定します。
-
-エラーの詳細は、SharePointの `temporary-runs/<run_id>/error-日時-識別子.log` を確認してください。失敗するたびに実行ログと例外の詳細を保存します。認証情報は伏せ字になります。SharePointへのログ保存自体が失敗した場合はActionsの進捗欄に表示します。
-
-途中までの分析結果を再利用するには、同じ `run_id` を指定して再開用ワークフローを実行してください。通常ワークフローを新しく起動すると別の実行になります。Actionsに途中結果の保存失敗が表示された場合は、最後にSharePointへ保存できた分から再開します。
-
-保存先の `temporary-runs/<run_id>/` にある `progress.json` とスナップショットを残してください。実行時の `config.toml`、`engineers.md`、`priority_rules.md` も同じフォルダで確認できます。再開には保存された条件を使用するため、条件を変更して実行する場合は通常ワークフローを起動してください。完了済みの実行や、別の実行が先に通知を完了した古い実行は再開できません。
-
-前回実行時間はSharePointの `run-state/checkpoint.json` で管理します。このファイルがない初回は、設定の `analysis.lookback_hours` に従って取得します。チェックポイントの削除・編集は取得期間に影響するため、復旧時以外は行わないでください。
-
-一時保存フォルダにはメール本文やプロフィールが含まれます。対象フォルダの閲覧権限を運用担当者に設定してください。不要になった完了済みの `temporary-runs/<run_id>/` はSharePointから削除できます。
-
-## SharePointへの接続設定
-
-1. Entraのアプリ登録に、Microsoft Graphのアプリケーション権限 `Sites.Selected` を追加し、管理者同意を付与します。
-2. 管理者に、保存先SharePointサイトへのアプリの `write` 許可を依頼します。
-3. アプリの「証明書とシークレット → フェデレーション資格情報」で、対象GitHubリポジトリのデフォルトブランチを登録します。GitHub Environmentを使用する場合は、ブランチではなくそのEnvironmentに合わせます。
-4. Repository secretsに `AZURE_CLIENT_ID` と `AZURE_TENANT_ID`、Repository variablesに `SHAREPOINT_DRIVE_ID`（ライブラリID）と `SHAREPOINT_FOLDER_ID`（対象フォルダID）を登録します。
-5. レポートは対象フォルダ内の `reports/` に保存します。フォルダがなければ実行時に作成します。レポートを読む人に `reports/` の閲覧権限を設定してください。
-6. 対象フォルダの直下に、UTF-8の `engineers.md` と `priority_rules.md` をアップロードします。
-
-設定済みのIDがSecrets側にある場合は、Variables側に登録してください。クライアントシークレットとAzureサブスクリプションIDの登録は不要です。
-
-接続テストは **Actions → SharePoint upload and Teams notification test → Run workflow** から、OIDCで許可したブランチを選んで実行します。Teamsの「テスト投稿」のリンクを開き、SharePointのテストレポートを確認してください。テスト後のファイルは必要に応じてSharePointから削除してください。
-
-## シークレット
-
-ローカルでは `.env`、GHAでは同名のRepository secretsに設定します。
-
-| 名前 | 内容 |
+| `.env` の項目 | 設定値 |
 | --- | --- |
-| `SAKURA_MAIL_HOST` | IMAPサーバーのホスト名 |
-| `SAKURA_MAIL_USERNAME` | IMAPログイン名（メールアドレス全体） |
+| `SAKURA_MAIL_HOST` | IMAPホスト名 |
+| `SAKURA_MAIL_USERNAME` | メールアドレス全体 |
 | `SAKURA_MAIL_PASSWORD` | IMAPパスワード |
 | `GEMINI_API_KEY` | Gemini APIキー |
-| `TEAMS_WEBHOOK_URL` | Teams WorkflowsのWebhook URL。GHAの通知で使用 |
-| `AZURE_CLIENT_ID` | Entraのアプリケーション（クライアント）ID。GHAのみ |
-| `AZURE_TENANT_ID` | Entraのディレクトリ（テナント）ID。GHAのみ |
+| `TEAMS_WEBHOOK_URL` | Teams通知時のみ必要 |
+| `DRIVE_ID` | GHAの `SHAREPOINT_DRIVE_ID` と同じ値 |
+| `FOLDER_ID` | GHAの `SHAREPOINT_FOLDER_ID` と同じ値 |
 
-```dotenv
-SAKURA_MAIL_HOST="example.sakura.ne.jp"
-SAKURA_MAIL_USERNAME="sales@example.com"
-SAKURA_MAIL_PASSWORD="メールパスワード"
-GEMINI_API_KEY="GeminiのAPIキー"
-TEAMS_WEBHOOK_URL="Teams WorkflowsのURL"
-```
+SharePointから `engineers.md`・`priority_rules.md` をダウンロードし、`config.toml` の `analysis.engineers_file`・`analysis.priority_rules_file` の場所へ配置します。
 
-`.env` は指定した `config.toml` と同じフォルダに配置してください。GHAでは `.env` の作成は不要です。シークレットをTOMLに記載したり、Gitにコミットしたりしないでください。
+- エンジニア一覧：`## 名前` ごとにプロフィールを記載。
+- 判定条件：`priority_rules.example.md` を参考に編集。
+- ログ：`config.toml` の `[logging] level` で設定。
+- `.env` と実データはGitにコミットしないでください。
 
-ログの出力レベルは `config.toml` の `[logging]` で設定します。通常は `level = "INFO"`、詳細を調べる場合は `level = "DEBUG"` にしてください。`WARNING`・`ERROR`・`CRITICAL` も指定できます。旧設定の `enabled = true/false` は削除して `level` に置き換えてください。ローカルでログを保存する場合は `python mail_analyzer.py --log-file execution.log` を実行します。
-
-## エンジニア一覧の設定
-
-SharePointの対象フォルダ直下にある `engineers.md` を編集して、エンジニアごとに `## 名前` の見出しとプロフィールを記載してください。共通注意事項は最初のエンジニアの見出しより前に記載します。GHAでは実行のたびにこのファイルを取得します。取得や形式の検証に失敗した場合は分析を開始しません。
-
-ローカル実行時はSharePointからダウンロードし、`config.toml` の `analysis.engineers_file` の場所（初期値は `engineers.md`）に配置してください。相対パスは設定ファイルの場所が基準です。GHAでもダウンロードしたファイルをこの設定先に配置します。`engineers.md` と `スキルシート/` はGit管理の対象外です。実データを別名でコミットしないでください。
-
-各人の `### マッチングフィードバック` 欄に、案件名・判定（適合／不適合／要確認）・理由を追記できます。以下は記入例です。実際に確認した内容に置き換えてください。
-
-```markdown
-### マッチングフィードバック
-
-- 案件名：○○システム開発（案件IDや受信日も分かれば記載）
-  - 判定：不適合
-  - 理由：必須のバックエンド実務3年以上を確認できない。研修期間を実務に含めない。
-```
-
-## 判定条件の設定
-
-SharePointの対象フォルダ直下に `priority_rules.md` を配置してください。GHAでは毎回取得し、形式を検証してから分析を開始します。取得や検証に失敗すると停止します。
-
-新しく作る場合は `priority_rules.example.md` をコピーし、各見出しの条件を編集してください。`## SES: 表示名` の条件は、1項目ずつ `- ` で始めます。件名パターンはバッククォートで囲んだ正規表現、機械選別・AI選別は `有効` または `無効` で指定します。表示件数は1〜10、一括処理件数は1〜100です。サンプルの見出し名は維持してください。
-
-ローカルではSharePointからダウンロードし、`analysis.priority_rules_file` の場所（`config.toml` の初期値は `priority_rules.md`）に配置してください。実データを含む `priority_rules.md` と旧 `priority_rules.toml` はGit管理対象外です。`config.example.toml` は公開用サンプルを参照します。実際の条件をサンプルへ書かないでください。
+## ローカル実行
 
 ```powershell
-# ルールだけを検証
-python validate_config.py priority_rules.md
-
-# ローカルの設定とルールを検証
 python validate_config.py
+python mail_analyzer.py
 
-# SharePoint取得前のCIで設定構造と公開用サンプルを検証
-python validate_config.py --structure-only
+# 期間指定
+python mail_analyzer.py --start 2026-10-01 --end 2026-10-15
+
+# メール取得のみ
+python mail_analyzer.py --fetch-only
+
+# Teams接続テスト
+python scheduled_run.py --test-notification
 ```
 
-## 判定結果の評価
+結果：`output/report.html` をブラウザーで開きます。別設定は `--config`、ログ保存は `--log-file` で指定します。
 
-実行フォルダの `engineer_assessments.json` を確認し、人が確認した正解を `matching_labels.json` に記載してください。対象レコードの `engineer`・`uid`・`project_key` をそのままコピーし、`expected` に `match`（適合）・`mismatch`（不適合）・`unknown`（情報不足）のいずれかを指定します。
+## 再マッチング
 
-```json
-[
-  {"engineer": "EK", "uid": "対象UID", "project_key": "対象レコードのキー", "expected": "mismatch"}
-]
-```
+SharePointから取得する場合は、Azure CLIをインストールしてログインします。
 
 ```powershell
-python evaluate_matching.py output/対象実行フォルダ/engineer_assessments.json matching_labels.json
+az login --tenant "テナントID" --allow-no-subscriptions
+
+# 一時ファイルIDを指定。最新のプロフィール・ルールをSharePointから取得
+python rematch.py --run-id 123456789-1
+
+# ローカルの分析結果を使用（SharePoint接続不要）
+python rematch.py --source-dir output/元の分析結果フォルダ
+
+# 保存済みメールの本文抽出から再開
+python rematch.py --source-dir output/元の分析結果フォルダ --start-from extraction
 ```
 
-正解を記載した案件に対する集計と判定の相違が表示されます。評価結果を比較するときは、同じ案件・エンジニアの組み合わせに正解を付けてください。
+再開地点は `--start-from` で指定します。
+
+| 指定値 | 再開地点 |
+| --- | --- |
+| `screening` | 件名選別 |
+| `extraction` | メール本文からの案件抽出 |
+| `aggregation` | 案件集計 |
+| `profiles`（既定） | プロフィール構造化 |
+| `matching` | 案件キーワード照合 |
+| `scoring` | 採点・レポート作成 |
+
+- 必須設定：`GEMINI_API_KEY`。SharePoint利用時は `DRIVE_ID`・`FOLDER_ID` も設定。
+- 結果：`output/rematch_日時_識別子/result/report.html` をブラウザーで開きます。
+- SharePoint保存・Teams通知：`--publish` を追加。
+- ID指定時はローカルのプロフィール・ルール設定先を最新データで上書き。
+- SES共通条件は元の分析と同じ内容・順序にしてください。
+
+[再マッチングの仕様](docs/rematching.md)
+
+## GitHub Actions
+
+[SharePoint接続設定](docs/sharepoint-setup.md) を済ませ、デフォルトブランチで **Run workflow** を実行します。
+
+| ワークフロー | 入力 |
+| --- | --- |
+| Mail analysis and Teams report | なし |
+| Resume mail analysis | 失敗した実行の `run_id`（例：`123456789-1`） |
+| Rematch saved mail analysis | 元の一時ファイルの `run_id`（完了済みも可）、再開地点の `start_from`（上表参照） |
+| SharePoint upload and Teams notification test | なし |
+
+エラーログ：`temporary-runs/<run_id>/error-*.log`。再マッチングは `temporary-runs/rematch-<GitHub実行ID>-<試行回数>/`。
+
+再利用する実行の `temporary-runs/<run_id>/` は残してください。`run-state/checkpoint.json` は通常編集しません。

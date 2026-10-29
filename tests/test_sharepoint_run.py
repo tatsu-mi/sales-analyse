@@ -6,6 +6,9 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from unittest.mock import MagicMock
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler
 
 import mail_analyzer as app
 import sharepoint_run as runner
@@ -80,6 +83,8 @@ class SharePointRunTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 1)
         manifest = self.store.get_json('temporary-runs/123-1/progress.json')
         self.assertEqual(manifest['status'], 'report_uploaded')
+        self.assertTrue(self.store.files['reports/report-123-1.html'].startswith(b'<!doctype html>'))
+        self.assertTrue(manifest['report_url'].endswith('.html'))
         self.assertNotIn('run-state/checkpoint.json', self.store.files)
         with patch.object(app, 'iter_fetch_mails', side_effect=AssertionError('IMAP repeated')), \
                 patch.object(runner, 'snapshot_settings', side_effect=AssertionError('settings changed')), \
@@ -353,6 +358,72 @@ class MatchingCacheTests(unittest.TestCase):
                 with self.subTest(name=name), self.assertRaises(ValueError):
                     runner.restore_matching_cache(buffer.getvalue(), root)
             self.assertFalse(list(root.rglob('*')))
+
+
+class StoreAzureCliTests(unittest.TestCase):
+    @patch.dict(runner.os.environ, {'DRIVE_ID': 'drive', 'FOLDER_ID': 'folder'})
+    @patch.object(runner, 'urlopen')
+    @patch.object(runner.sharepoint_reports, 'run_az')
+    def test_rejected_download_redirect_uses_graph_content_stream(self, run_az, urlopen):
+        run_az.return_value.stdout = 'test-token'
+        metadata, content = MagicMock(), MagicMock()
+        metadata.__enter__.return_value.read.return_value = b'{"id":"item-id"}'
+        content.__enter__.return_value.read.return_value = b'downloaded'
+        urlopen.side_effect = [HTTPError('https://example.sharepoint.com/download',
+                                        401, 'Unauthorized', {}, None), metadata, content]
+        self.assertEqual(runner.Store().request('GET', 'nested/file.zip'), b'downloaded')
+        requests = [entry.args[0] for entry in urlopen.call_args_list]
+        self.assertEqual(requests[1].full_url,
+                         'https://graph.microsoft.com/v1.0/drives/drive/items/folder:/nested/file.zip?$select=id')
+        self.assertEqual(requests[2].full_url,
+                         'https://graph.microsoft.com/beta/drives/drive/items/item-id/contentStream')
+        for request in requests:
+            self.assertEqual(request.get_header('Authorization'), 'Bearer test-token')
+
+    @patch.dict(runner.os.environ, {'DRIVE_ID': 'drive', 'FOLDER_ID': 'folder'})
+    @patch.object(runner, 'urlopen')
+    @patch.object(runner.sharepoint_reports, 'run_az')
+    def test_graph_authentication_failure_and_upload_do_not_use_download_fallback(self, run_az, urlopen):
+        store = runner.Store()
+        for method, url in [('GET', store.base), ('PUT', 'https://example.sharepoint.com/upload')]:
+            urlopen.reset_mock()
+            urlopen.side_effect = HTTPError(url, 401, 'Unauthorized', {}, None)
+            with self.subTest(method=method), self.assertRaisesRegex(app.ToolError, 'HTTP 401'):
+                store.request(method, 'test')
+            self.assertEqual(urlopen.call_count, 1)
+
+    @patch.dict(runner.os.environ, {'DRIVE_ID': 'drive', 'FOLDER_ID': 'folder'})
+    @patch.object(runner, 'urlopen')
+    @patch.object(runner.sharepoint_reports, 'run_az')
+    def test_missing_file_during_fallback_obeys_missing_flag(self, run_az, urlopen):
+        for missing in (True, False):
+            urlopen.side_effect = [HTTPError('https://example.sharepoint.com/download',
+                                            401, 'Unauthorized', {}, None),
+                                  HTTPError('https://graph.microsoft.com/metadata', 404, 'Not Found', {}, None)]
+            with self.subTest(missing=missing):
+                if missing:
+                    self.assertIsNone(runner.Store().request('GET', 'test', missing=True))
+                else:
+                    with self.assertRaisesRegex(app.ToolError, 'direct download.*HTTP 404'):
+                        runner.Store().request('GET', 'test')
+
+    @patch.dict(runner.os.environ, {'DRIVE_ID': 'drive', 'FOLDER_ID': 'folder'})
+    @patch.object(runner, 'urlopen')
+    @patch.object(runner.sharepoint_reports, 'run_az')
+    def test_content_transfer_uses_shared_cli_launcher(self, run_az, urlopen):
+        run_az.return_value.stdout = 'test-token\n'
+        urlopen.return_value.__enter__.return_value.read.return_value = b'content'
+        self.assertEqual(runner.Store().request('GET', 'engineers.md'), b'content')
+        run_az.assert_called_once_with([
+            'account', 'get-access-token', '--resource', 'https://graph.microsoft.com/',
+            '--query', 'accessToken', '--output', 'tsv'])
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header('Authorization'), 'Bearer test-token')
+        redirect = HTTPRedirectHandler().redirect_request(
+            request, None, 302, 'Found', {},
+            'https://example.sharepoint.com/download?tempauth=test')
+        self.assertIsNone(redirect.get_header('Authorization'))
+        self.assertEqual(redirect.get_method(), 'GET')
 
 
 if __name__ == '__main__':

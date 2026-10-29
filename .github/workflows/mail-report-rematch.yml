@@ -1,0 +1,67 @@
+name: Rematch saved mail analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Saved temporary run ID (completed runs supported)'
+        required: true
+        type: string
+      start_from:
+        description: 'Stage to restart from'
+        required: true
+        default: profiles
+        type: choice
+        options:
+          - screening
+          - extraction
+          - aggregation
+          - profiles
+          - matching
+          - scoring
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: mail-report
+  cancel-in-progress: false
+
+jobs:
+  rematch:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements.txt
+      - name: Authenticate to Microsoft 365
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Rematch saved analysis with current settings, publish and notify
+        env:
+          SOURCE_RUN_ID: ${{ inputs.run_id }}
+          START_FROM: ${{ inputs.start_from }}
+          DRIVE_ID: ${{ vars.SHAREPOINT_DRIVE_ID }}
+          FOLDER_ID: ${{ vars.SHAREPOINT_FOLDER_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          # Detailed output may contain private profile and mail data.
+          if ! python rematch.py --run-id "$SOURCE_RUN_ID" --start-from "$START_FROM" --sharepoint-settings --publish --progress-fd 3 --log-file "$RUNNER_TEMP/mail-rematch.log" 3>&1 > "$RUNNER_TEMP/mail-rematch.log" 2>&1; then
+            echo "::error::Rematching failed. Check temporary-runs/rematch-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/ for private diagnostics."
+            exit 1
+          fi

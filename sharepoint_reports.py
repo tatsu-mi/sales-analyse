@@ -1,17 +1,33 @@
 """Resolve or create the reports folder using the workflow's Azure CLI login."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 from urllib.parse import quote
 
 
+def run_az(arguments):
+    """Resolve Azure CLI, including the Windows az.cmd launcher, on PATH."""
+    executable = shutil.which('az')
+    if executable is None:
+        raise ValueError(
+            'Azure CLI (az) が見つかりません。Azure CLIをインストールし、'
+            'ターミナルや実行元アプリを再起動して、az --version を確認してください。')
+    try:
+        return subprocess.run([executable, *arguments], capture_output=True, text=True, check=True)
+    except FileNotFoundError as error:
+        raise ValueError(
+            'Azure CLIを起動できません。インストール先とPATHを確認し、'
+            '実行元アプリを再起動して、az --version を確認してください。') from error
+
+
 def graph(method, url, body=None):
-    command = ['az', 'rest', '--method', method, '--url', url,
+    command = ['rest', '--method', method, '--url', url,
                '--resource', 'https://graph.microsoft.com/', '--output', 'json']
     if body is not None:
         command += ['--body', json.dumps(body)]
-    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    result = run_az(command)
     return json.loads(result.stdout)
 
 
