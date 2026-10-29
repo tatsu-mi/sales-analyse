@@ -320,12 +320,12 @@ class IntegratedPipelineTests(unittest.TestCase):
             instance.run()
         sizes = [len(call.args[0]) for call in request.call_args_list
                  if call.args[7] == matching.KEYWORD_SCHEMA]
-        self.assertEqual(sizes, [64, 64, 28])
+        self.assertEqual(sizes, [20] * 7 + [16])
         self.assertEqual(sum(sizes), 156)
         self.assertEqual(len({item['i'] for item in self.project_calls}), 156)
 
-    def test_split_does_not_change_size_of_later_batches(self):
-        instance = self.make(self.setup_projects(128))
+    def test_output_limit_lowers_project_cap_one_at_a_time_down_to_ten(self):
+        instance = self.make(self.setup_projects(34))
         instance.report_limit = 60000
         attempts = []
         original = instance.api.generate
@@ -334,14 +334,60 @@ class IntegratedPipelineTests(unittest.TestCase):
             if kwargs.get('response_schema') == matching.KEYWORD_SCHEMA:
                 count = len(self.h.uploads[kwargs['file_data']['uri']].splitlines())
                 attempts.append(count)
-                if count > 32:
+                if count > 10:
+                    raise instance.api.OutputLimitError('truncated')
+            return original(*args, **kwargs)
+
+        with patch.object(pipeline, 'KEYWORD_MATCH_INITIAL_PROJECTS', 12), \
+                patch.object(instance.api, 'generate', side_effect=generate):
+            instance.run()
+        self.assertEqual(attempts, [12, 6, 6, 11, 5, 6, 10, 1])
+        self.assertEqual(len({item['i'] for item in self.project_calls}), 34)
+
+    def test_failed_twenty_is_halved_and_later_batches_use_nineteen(self):
+        instance = self.make(self.setup_projects(60))
+        instance.report_limit = 60000
+        attempts = []
+        original = instance.api.generate
+
+        def generate(*args, **kwargs):
+            if kwargs.get('response_schema') == matching.KEYWORD_SCHEMA:
+                count = len(self.h.uploads[kwargs['file_data']['uri']].splitlines())
+                attempts.append(count)
+                if count > 19:
                     raise instance.api.OutputLimitError('truncated')
             return original(*args, **kwargs)
 
         with patch.object(instance.api, 'generate', side_effect=generate):
             instance.run()
-        self.assertEqual(attempts, [64, 32, 32, 64, 32, 32])
-        self.assertEqual(len({item['i'] for item in self.project_calls}), 128)
+        self.assertEqual(attempts, [20, 10, 10, 19, 19, 2])
+        self.assertEqual(len({item['i'] for item in self.project_calls}), 60)
+
+    def test_output_failure_at_minimum_splits_batch_without_lowering_cap_below_ten(self):
+        instance = self.make(self.setup_projects(21))
+        instance.report_limit = 60000
+        attempts = []
+        original = instance.api.generate
+
+        def generate(*args, **kwargs):
+            if kwargs.get('response_schema') == matching.KEYWORD_SCHEMA:
+                count = len(self.h.uploads[kwargs['file_data']['uri']].splitlines())
+                attempts.append(count)
+                if count > 5:
+                    raise instance.api.OutputLimitError('truncated')
+            return original(*args, **kwargs)
+
+        with patch.object(pipeline, 'KEYWORD_MATCH_INITIAL_PROJECTS', 10), \
+                patch.object(instance.api, 'generate', side_effect=generate):
+            instance.run()
+        self.assertEqual(attempts, [10, 5, 5, 10, 5, 5, 1])
+        self.assertEqual(len({item['i'] for item in self.project_calls}), 21)
+
+    def test_project_count_cap_also_applies_to_projects_with_no_requirements(self):
+        instance = self.make(self.setup_projects(1))
+        items = [dict(i=i, u=[]) for i in range(130)]
+        groups = list(instance.groups(items, 'prompt', instance.settings, 60000, matching.KEYWORD_SCHEMA))
+        self.assertEqual([len(batch) for batch, _, _ in groups], [20] * 6 + [10])
 
     def test_answer_cache_reuses_shared_batch_without_sending_again(self):
         instance = self.make(self.setup_projects(1))

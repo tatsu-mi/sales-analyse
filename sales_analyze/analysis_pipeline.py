@@ -24,6 +24,8 @@ VERSION = 7
 # Quote-free profile extraction has its own cache identity.
 PROFILE_CACHE_VERSION = 7
 MAX_ANALYSIS_EMAILS = 1000
+KEYWORD_MATCH_INITIAL_PROJECTS = 20
+KEYWORD_MATCH_MIN_PROJECTS = 10
 # Matching responses repeat every requirement, even when the input is compact.
 KEYWORD_MATCH_MAX_UNITS = 64
 KEYWORD_MATCH_TOKENS_PER_UNIT = 128
@@ -260,7 +262,7 @@ class Pipeline:
         atomic_json(path, {"key": key, "tokens": tokens})
         return tokens
 
-    def groups(self, items, prompt, settings, limit, schema=None):
+    def groups(self, items, prompt, settings, limit, schema=None, matching_limit=None):
         pending, size, units = [], 0, 0
         keyword_matching = schema == integrated_matching.KEYWORD_SCHEMA
         unit_limit = min(KEYWORD_MATCH_MAX_UNITS,
@@ -268,8 +270,11 @@ class Pipeline:
         for item in items:
             line = encoded(item) + "\n"
             item_units = len(item['u']) if keyword_matching else 0
+            project_limit = (matching_limit['projects'] if matching_limit is not None
+                             else KEYWORD_MATCH_INITIAL_PROJECTS)
             if pending and (size + len(line.encode("utf-8")) > limit * 2
-                            or keyword_matching and units + item_units > unit_limit):
+                            or keyword_matching and (len(pending) >= project_limit
+                                                     or units + item_units > unit_limit)):
                 yield from self.fit(pending, prompt, settings, limit, schema)
                 pending, size, units = [], 0, 0
             pending.append(item)
@@ -623,10 +628,13 @@ class Pipeline:
         return prioritization.render_report(ranked, self.rules)
 
 
-    def structured_parts(self, items, prompt, schema, validator, label, fallback, on_completed=None):
+    def structured_parts(self, items, prompt, schema, validator, label, fallback, on_completed=None,
+                         matching_limit=None):
         """Split bounded structured requests; never cache an unvalidated fallback."""
         if not items:
             return []
+        if schema == integrated_matching.KEYWORD_SCHEMA and matching_limit is None:
+            matching_limit = {'projects': KEYWORD_MATCH_INITIAL_PROJECTS}
         def validate(answer, data):
             try:
                 return validator(answer, data)
@@ -634,8 +642,11 @@ class Pipeline:
                 raise InvalidExtraction(str(error)) from None
 
         result = []
+        pending = deque(items)
         # Input-budget and network/authentication errors propagate for resume.
-        for batch, text, tokens in self.groups(items, prompt, self.settings, self.report_limit, schema):
+        while pending:
+            batch, text, tokens = next(self.groups(
+                pending, prompt, self.settings, self.report_limit, schema, matching_limit))
             try:
                 answer = self.request(batch, text, tokens, prompt, self.settings, self.report_limit,
                                       label, schema, validate)
@@ -644,15 +655,24 @@ class Pipeline:
                 if schema == integrated_matching.KEYWORD_SCHEMA:
                     LOGGER.warning('案件照合の応答を検証できないか出力上限に達しました（%s案件）: %s',
                                    len(batch), error)
+                    if (isinstance(error, self.api.OutputLimitError)
+                            and matching_limit['projects'] > KEYWORD_MATCH_MIN_PROJECTS):
+                        matching_limit['projects'] -= 1
+                        LOGGER.info('案件照合の出力上限到達により、送信件数の上限を%s案件へ変更します。',
+                                    matching_limit['projects'])
                 if len(batch) == 1:
                     records = [fallback(batch[0], str(error))]
                 else:
                     middle = len(batch) // 2
                     result.extend(self.structured_parts(batch[:middle], prompt, schema, validator, label, fallback,
-                                                        on_completed))
+                                                        on_completed, matching_limit))
                     result.extend(self.structured_parts(batch[middle:], prompt, schema, validator, label, fallback,
-                                                        on_completed))
+                                                        on_completed, matching_limit))
+                    for _ in batch:
+                        pending.popleft()
                     continue
+            for _ in batch:
+                pending.popleft()
             if on_completed:
                 on_completed(records)
             result.extend(records)

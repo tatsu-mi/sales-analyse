@@ -65,7 +65,7 @@ class PriorityTests(unittest.TestCase):
         report = priority.render_report(ranked, self.rules)
         summary, details = report.split(f'## {self.rules["ses"]["label"]}（', 1)
         self.assertTrue(summary.startswith('## 案件タイトルサマリー\n'))
-        self.assertIn('1. ses案件1\n2. ses案件2', summary)
+        self.assertIn('1. [ses案件1](#project-1-1)\n2. [ses案件2](#project-1-2)', summary)
         self.assertNotIn('contract', summary)
         self.assertNotIn('参照元メール本文', summary)
         self.assertNotIn('判定:', summary)
@@ -78,7 +78,7 @@ class PriorityTests(unittest.TestCase):
                                      {'file': 'B.pdf', 'entries': []}], 'contract': []}
         report = priority.render_report(ranked, self.rules)
         summary = report.split(f'## {self.rules["ses"]["label"]} / ', 1)[0]
-        self.assertIn(f'**{self.rules["ses"]["label"]} / A\\.pdf（上位10件まで）**\n\n1. 開発案件', summary)
+        self.assertIn(f'**{self.rules["ses"]["label"]} / A\\.pdf（上位10件まで）**\n\n1. [開発案件](#project-1-1)', summary)
         self.assertIn(f'**{self.rules["ses"]["label"]} / B\\.pdf（上位10件まで）**\n\n該当候補はありません。', summary)
         self.assertNotIn('受託', summary)
 
@@ -88,8 +88,8 @@ class PriorityTests(unittest.TestCase):
         ranked['ses'][1]['latest']['title'] = ''
         report = priority.render_report(ranked, self.rules)
         summary = report.split(f'## {self.rules["ses"]["label"]}（', 1)[0]
-        self.assertIn(r'1. \[案件\]\(https://example\.com\)  \*開発\*', summary)
-        self.assertIn('2. 不明', summary)
+        self.assertIn(r'1. [\[案件\]\(https://example\.com\)  \*開発\*](#project-1-1)', summary)
+        self.assertIn('2. [不明](#project-1-2)', summary)
 
     def test_best_project_represents_a_mail_in_each_category(self):
         weak = self.candidate(1, states=["unknown"] * len(self.rules['ses']['criteria']))

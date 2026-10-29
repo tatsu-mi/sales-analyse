@@ -181,12 +181,12 @@ def render_report(ranked, rules):
         return str(value or "不明").replace("\n", " ").replace("\r", " ").replace("|", "\\|")
 
     lines = ["## 案件タイトルサマリー", ""]
-    for label, entries in report_sections(ranked, rules):
+    for section_index, (label, entries) in enumerate(report_sections(ranked, rules), 1):
         lines += [f"**{label}（上位{rules['top_n']}件まで）**", ""]
-        for entry in entries:
+        for entry_index, entry in enumerate(entries, 1):
             title = str(entry['latest']['title'] or '不明').replace('\r', ' ').replace('\n', ' ')
             title = re.sub(r'([\\`*_{}\[\]()#+.!|>~-])', r'\\\1', title)
-            lines.append(f"{entry['rank']}. {title}")
+            lines.append(f"{entry['rank']}. [{title}](#project-{section_index}-{entry_index})")
         if not entries:
             lines.append("該当候補はありません。")
         lines.append("")
@@ -201,13 +201,13 @@ def render_report(ranked, rules):
         lines += ["priority_rules.mdのSES条件は全エンジニアに共通で適用し、engineers.mdの各人のスキル・通勤条件を追加判定します。", ""]
         lines += ["必須条件・共通条件・通勤条件を全て確認できた案件だけを適合確認済みとします。各案件に適合・要確認の判定を表示します。同じ案件が複数エンジニアの候補に入る場合があります。", ""]
         lines += ["勤務地は最寄り駅から片道90分以内、または出社不要のフルリモートを必須とします。通勤時間が確認できない案件は要確認です。", ""]
-    for label, entries in report_sections(ranked, rules):
+    for section_index, (label, entries) in enumerate(report_sections(ranked, rules), 1):
         lines += [f"## {label}（上位{rules['top_n']}件まで）", ""]
         if not entries:
             lines += ["該当候補はありません。", ""]
-        for entry in entries:
+        for entry_index, entry in enumerate(entries, 1):
             project = entry["latest"]
-            lines += [f"### {entry['rank']}位: {text(project['title'])}", "",
+            lines += [f"### {entry['rank']}位: {text(project['title'])} {{#project-{section_index}-{entry_index}}}", "",
                       f"判定: {entry['verification']}（共通条件の適合 {entry['matches']}/{entry['total_criteria']}）  ",
                       f"送信元: {text(entry['sender'])} / 問い合わせ先: {text(project['contact'])}  ",
                       f"単価・予算: {text(project['budget'])} / 開始・期間: {text(project['start'])}  ",

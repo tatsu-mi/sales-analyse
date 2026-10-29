@@ -5,7 +5,7 @@ import re
 
 def inline(text):
     """Interpret generated links/emphasis, escaping all untrusted HTML."""
-    pattern = r'\\([\\`*_{}\[\]()#+.!|>~-])|\[([^\]\n]+)\]\(([^)\s]+)\)|\*\*([^\n]+?)\*\*'
+    pattern = r'\\([\\`*_{}\[\]()#+.!|>~-])|\[((?:\\[^\n]|[^\\\]\n])+)\]\(([^)\s]+)\)|\*\*([^\n]+?)\*\*'
     parts, start = [], 0
     for match in re.finditer(pattern, text):
         parts.append(escape(text[start:match.start()]))
@@ -13,9 +13,11 @@ def inline(text):
         if literal is not None:
             parts.append(escape(literal))
         elif label is not None:
-            # Only report data files and HTTPS links can become clickable links.
+            # Only report fragments, data files and HTTPS links are clickable.
             safe = (re.fullmatch(r'(?:[\w.-]+/)*[\w.-]+\.(?:json|jsonl)', target)
-                    and '..' not in target.split('/')) or target.startswith('https://')
+                    and '..' not in target.split('/')) or target.startswith('https://') or re.fullmatch(
+                        r'#project-\d+-\d+', target)
+            label = re.sub(r'\\([\\`*_{}\[\]()#+.!|>~-])', r'\1', label)
             parts.append(f'<a href="{escape(target, quote=True)}">{escape(label)}</a>'
                          if safe else escape(label))
         else:
@@ -41,12 +43,21 @@ def render_report(content):
                 body.append(lines[index])
                 index += 1
             index += 1
-            blocks.append('<pre class="source-mail">' + escape('\n'.join(body)) + '</pre>')
+            if blocks and blocks[-1] == '<p>参照元メール</p>':
+                blocks.pop()
+            blocks.append('<details class="source-mail-details"><summary>参照元メール</summary>'
+                          '<pre class="source-mail">' + escape('\n'.join(body)) + '</pre></details>')
             continue
         heading = re.match(r'^(#{1,3}) (.*)$', line)
         if heading:
             level = len(heading[1])
-            blocks.append(f'<h{level}>{inline(heading[2])}</h{level}>')
+            title = heading[2]
+            anchor = re.search(r' \{#(project-\d+-\d+)\}$', title)
+            attributes = ''
+            if anchor:
+                attributes = f' id="{anchor[1]}"'
+                title = title[:anchor.start()]
+            blocks.append(f'<h{level}{attributes}>{inline(title)}</h{level}>')
             continue
         if line.startswith('| ') and index < len(lines) and re.fullmatch(r'\|[\s:|\-]+', lines[index]):
             def cells(row):
@@ -93,6 +104,8 @@ h1 { font-size: 1.8rem; color: #163b65; }
 h2 { margin-top: 2.5rem; padding-bottom: .4rem; border-bottom: 2px solid #cbd5e1; }
 h3 { margin-top: 2rem; padding: .7rem 1rem; background: #edf4fb; border-left: 4px solid #2864a0; }
 a { color: #185a9d; }
+.source-mail-details { margin: 1rem 0; }
+.source-mail-details summary { cursor: pointer; color: #185a9d; }
 .source-mail { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit;
                padding: 20px; background: #f8fafc; border: 1px solid #dbe3ec; border-radius: 6px; }
 .table-scroll { overflow-x: auto; }
