@@ -2,8 +2,8 @@ import copy
 import json
 import unittest
 
-import prioritization
-import title_filter
+from sales_analyze import prioritization
+from sales_analyze import title_filter
 
 
 class TitleFilterTests(unittest.TestCase):

@@ -3,7 +3,7 @@ import json
 import unittest
 from datetime import date
 
-import integrated_matching as matching
+from sales_analyze import integrated_matching as matching
 
 
 def fact(terms=('Python',), experience='professional', months=48, **extra):

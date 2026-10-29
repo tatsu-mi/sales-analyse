@@ -6,11 +6,11 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from environment import load_env as load_dotenv
+from sales_analyze.environment import load_env as load_dotenv
 
-import analysis_pipeline
-import mail_analyzer as app
-import rematch
+from sales_analyze import analysis_pipeline
+from sales_analyze import mail_analyzer as app
+from sales_analyze import rematch
 import test_integrated_pipeline as integrated
 from test_sharepoint_run import MemoryStore
 

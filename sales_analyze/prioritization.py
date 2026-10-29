@@ -1,6 +1,6 @@
 """Evidence-based assessments and deterministic, per-mail shortlists."""
 import re
-import title_filter
+from . import title_filter
 from pathlib import Path
 
 KINDS = ("ses",)

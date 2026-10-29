@@ -1,6 +1,6 @@
 # 保存済みメール分析の再マッチング
 
-`rematch.py` は保存済みメールや案件群に対し、選択した処理段階から分析とレポート作成を実行する。既定では現在のエンジニア情報を使った再マッチングを行う。IMAP取得は実行しない。
+`sales_analyze/rematch.py` は保存済みメールや案件群に対し、選択した処理段階から分析とレポート作成を実行する。既定では現在のエンジニア情報を使った再マッチングを行う。IMAP取得は実行しない。
 
 入力はSharePointの `temporary-runs/<run_id>/progress.json` が指す最新スナップショット、またはローカルの分析結果フォルダ。完了状態や通常処理の配信チェックポイントによる再開制限は適用しない。選んだ段階より前の処理結果が必要。メール0件で完了した実行も空レポートとして処理できる。
 
@@ -18,9 +18,9 @@
 | `scoring` | 採点・レポート作成 | `matching` と同じ入力と、案件照合のキャッシュ |
 
 ```powershell
-python rematch.py --source-dir output/元の分析結果フォルダ --start-from screening
-python rematch.py --run-id 123456789-1 --start-from extraction
-python rematch.py --source-dir output/前回の実行/result --start-from scoring
+python -m sales_analyze.rematch --source-dir output/元の分析結果フォルダ --start-from screening
+python -m sales_analyze.rematch --run-id 123456789-1 --start-from extraction
+python -m sales_analyze.rematch --source-dir output/前回の実行/result --start-from scoring
 ```
 
 指定した段階以降は再実行する。件名選別の設定変更時は `screening`、SES共通条件やメール抽出の変更時は `extraction` を選ぶ。`aggregation` 以降では現在の抽出形式と元と同じSES共通条件が必要。

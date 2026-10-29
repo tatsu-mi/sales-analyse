@@ -9,11 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import analysis_pipeline as pipeline
-import mail_analyzer as app
-import title_filter
-import engineer_matching
-import scheduled_run
+from sales_analyze import analysis_pipeline as pipeline
+from sales_analyze import mail_analyzer as app
+from sales_analyze import title_filter
+from sales_analyze import engineer_matching
+from sales_analyze import scheduled_run
 
 
 def mail(uid, body="mail", received="2026-10-01T09:00:00+09:00"):
@@ -125,7 +125,7 @@ class PipelineTests(unittest.TestCase):
             pipeline.validate_extraction(answer(), [mail(1, 'Python実務必須')], rules)
 
     def test_compact_keyword_extraction_ranks_without_quotes_and_reprints_saved_mail(self):
-        import integrated_matching as matching
+        from sales_analyze import integrated_matching as matching
         from test_integrated_matching import career, fact
         project = opportunity()
         project['mandatory_requirements'] = [dict(terms=['Python', 'Java'], operator='any',

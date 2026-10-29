@@ -3,8 +3,8 @@ import argparse
 from pathlib import Path
 import sys
 
-import mail_analyzer as app
-import prioritization
+from . import mail_analyzer as app
+from . import prioritization
 
 
 def validate(paths, *, structure_only=False):

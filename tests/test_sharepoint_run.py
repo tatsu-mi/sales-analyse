@@ -10,11 +10,11 @@ from unittest.mock import MagicMock
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler
 
-import mail_analyzer as app
-import sharepoint_run as runner
-import run_progress
-import analysis_pipeline
-import title_filter
+from sales_analyze import mail_analyzer as app
+from sales_analyze import sharepoint_run as runner
+from sales_analyze import run_progress
+from sales_analyze import analysis_pipeline
+from sales_analyze import title_filter
 
 snapshot_settings = runner.snapshot_settings
 

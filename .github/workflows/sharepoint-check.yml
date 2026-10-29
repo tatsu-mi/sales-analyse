@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reports_folder_id=$(python sharepoint_reports.py)
+          reports_folder_id=$(python -m sales_analyze.sharepoint_reports)
           filename="sharepoint-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.html"
           printf '<!doctype html><html lang="ja"><meta charset="utf-8"><title>SharePoint・Teams連携テスト</title><h1>SharePoint・Teams連携テスト</h1><p>SharePointへのアップロードとTeamsへのリンク投稿の接続確認です。</p><p>実行ID: %s / 試行: %s</p></html>\n' \
             "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
@@ -88,7 +88,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import os
-          from scheduled_run import send_card, text_card_payload, validate_report_url
+          from sales_analyze.scheduled_run import send_card, text_card_payload, validate_report_url
 
           report_url = os.environ['REPORT_URL']
           validate_report_url(report_url)

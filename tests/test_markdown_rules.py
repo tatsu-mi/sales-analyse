@@ -4,9 +4,9 @@ import unittest
 import contextlib
 import io
 
-import mail_analyzer
-import prioritization
-import validate_config
+from sales_analyze import mail_analyzer
+from sales_analyze import prioritization
+from sales_analyze import validate_config
 
 
 class MarkdownRulesTests(unittest.TestCase):

@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import mail_analyzer as app
+from sales_analyze import mail_analyzer as app
 
 
 class FrozenDatetime(datetime):

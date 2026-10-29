@@ -3,9 +3,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import html_report
-import mail_analyzer as app
-import prioritization
+from sales_analyze import html_report
+from sales_analyze import mail_analyzer as app
+from sales_analyze import prioritization
 
 
 class ParsedReport(HTMLParser):

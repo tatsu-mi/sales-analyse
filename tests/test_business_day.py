@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import check_business_day as calendar
+from sales_analyze import check_business_day as calendar
 
 
 HOLIDAYS = ('国民の祝日・休日月日,国民の祝日・休日名称\r\n'

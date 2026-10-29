@@ -3,10 +3,10 @@ import json
 import unittest
 from unittest.mock import patch
 
-import analysis_pipeline as pipeline
-import integrated_matching as matching
-import run_progress
-import scheduled_run
+from sales_analyze import analysis_pipeline as pipeline
+from sales_analyze import integrated_matching as matching
+from sales_analyze import run_progress
+from sales_analyze import scheduled_run
 import test_analysis_pipeline as harness
 from test_integrated_matching import career, expression, fact, plan, atom
 

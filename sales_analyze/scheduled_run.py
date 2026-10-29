@@ -13,8 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-import mail_analyzer as app
-import prioritization
+from . import mail_analyzer as app
+from . import prioritization
 
 # Leave room below Teams' 28 KB limit, including the JSON/card envelope.
 MAX_CARD_BYTES = 24_000

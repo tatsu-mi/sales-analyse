@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import run_progress
-import sharepoint_run as runner
+from sales_analyze import run_progress
+from sales_analyze import sharepoint_run as runner
 
 
 class PublicProgressTests(unittest.TestCase):

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 
-import mail_analyzer as app
+from sales_analyze import mail_analyzer as app
 
 
 class MailTests(unittest.TestCase):

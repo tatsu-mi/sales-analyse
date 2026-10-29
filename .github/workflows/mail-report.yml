@@ -30,7 +30,7 @@ jobs:
           python-version: '3.13'
       - name: Check Japanese business day
         id: calendar
-        run: python check_business_day.py
+        run: python -m sales_analyze.check_business_day
 
   report:
     # Keep one checkpoint stream on the default branch, including manual runs.
@@ -101,9 +101,9 @@ jobs:
           import os
           import shutil
           from pathlib import Path
-          import engineer_matching
-          import mail_analyzer
-          import prioritization
+          from sales_analyze import engineer_matching
+          from sales_analyze import mail_analyzer
+          from sales_analyze import prioritization
 
           try:
               source = Path(os.environ['RUNNER_TEMP'])
@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           # Descriptor 3 streams fixed progress messages; detailed output stays private.
-          if ! python sharepoint_run.py --progress-fd 3 --log-file "$RUNNER_TEMP/mail-analysis.log" 3>&1 > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
+          if ! python -m sales_analyze.sharepoint_run --progress-fd 3 --log-file "$RUNNER_TEMP/mail-analysis.log" 3>&1 > "$RUNNER_TEMP/mail-analysis.log" 2>&1; then
             echo "::error::Run failed. Resume with run ID ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}."
             exit 1
           fi

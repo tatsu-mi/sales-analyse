@@ -61,7 +61,7 @@ jobs:
         shell: bash
         run: |
           # Detailed output may contain private profile and mail data.
-          if ! python rematch.py --run-id "$SOURCE_RUN_ID" --start-from "$START_FROM" --sharepoint-settings --publish --progress-fd 3 --log-file "$RUNNER_TEMP/mail-rematch.log" 3>&1 > "$RUNNER_TEMP/mail-rematch.log" 2>&1; then
+          if ! python -m sales_analyze.rematch --run-id "$SOURCE_RUN_ID" --start-from "$START_FROM" --sharepoint-settings --publish --progress-fd 3 --log-file "$RUNNER_TEMP/mail-rematch.log" 3>&1 > "$RUNNER_TEMP/mail-rematch.log" 2>&1; then
             echo "::error::Rematching failed. Check temporary-runs/rematch-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/ for private diagnostics."
             exit 1
           fi

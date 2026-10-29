@@ -214,11 +214,11 @@ AIを使わないのは比較・判定処理であり、判断材料が欠けて
 
 ## 関連する現行実装
 
-- [integrated_matching.py](../../integrated_matching.py): 構造化スキーマ、情報検証、統合辞書、必須条件の機械判定、加点・ランキング。
-- [analysis_pipeline.py](../../analysis_pipeline.py): 案件分析と個人別マッチングの実行。
-- [engineer_matching.py](../../engineer_matching.py): プロフィール読込、根拠・必須条件・通勤条件の検証。
-- [evaluate_matching.py](../../evaluate_matching.py): 保存した判定と人が確認したラベルの比較。
-- [sharepoint_run.py](../../sharepoint_run.py): 定期実行時の構造化情報の保存・復元。
+- [integrated_matching.py](../../sales_analyze/integrated_matching.py): 構造化スキーマ、情報検証、統合辞書、必須条件の機械判定、加点・ランキング。
+- [analysis_pipeline.py](../../sales_analyze/analysis_pipeline.py): 案件分析と個人別マッチングの実行。
+- [engineer_matching.py](../../sales_analyze/engineer_matching.py): プロフィール読込、根拠・必須条件・通勤条件の検証。
+- [evaluate_matching.py](../../sales_analyze/evaluate_matching.py): 保存した判定と人が確認したラベルの比較。
+- [sharepoint_run.py](../../sales_analyze/sharepoint_run.py): 定期実行時の構造化情報の保存・復元。
 
 ## 実装時に確定したルール
 

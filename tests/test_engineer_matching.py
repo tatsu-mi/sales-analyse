@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import engineer_matching as matching
-import prioritization
+from sales_analyze import engineer_matching as matching
+from sales_analyze import prioritization
 
 
 class ProfileTests(unittest.TestCase):

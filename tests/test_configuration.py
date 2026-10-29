@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import environment
-import mail_analyzer as app
-import validate_config
+from sales_analyze import environment
+from sales_analyze import mail_analyzer as app
+from sales_analyze import validate_config
 
 
 class EnvironmentTests(unittest.TestCase):

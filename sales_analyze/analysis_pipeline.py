@@ -1,11 +1,11 @@
 """Token-bounded file analysis with validated extraction and restartable steps."""
 from __future__ import annotations
 
-import prioritization
-import title_filter
-import engineer_matching
-import integrated_matching
-import run_progress
+from . import prioritization
+from . import title_filter
+from . import engineer_matching
+from . import integrated_matching
+from . import run_progress
 import hashlib
 import json
 import logging

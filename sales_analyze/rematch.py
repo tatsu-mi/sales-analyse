@@ -9,10 +9,10 @@ import sys
 import tempfile
 from uuid import uuid4
 
-import mail_analyzer as app
-import sharepoint_run
-import scheduled_run
-import run_progress
+from . import mail_analyzer as app
+from . import sharepoint_run
+from . import scheduled_run
+from . import run_progress
 
 
 START_STEPS = {

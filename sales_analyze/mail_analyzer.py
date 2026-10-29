@@ -26,9 +26,9 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-import analysis_pipeline
-import environment
-import run_progress
+from . import analysis_pipeline
+from . import environment
+from . import run_progress
 
 JST = timezone(timedelta(hours=9))
 LOGGER = logging.getLogger("mail_analyzer")
@@ -607,7 +607,7 @@ def upload_mail_file(settings, api_key, path):
 
 
 def save_report_files(output, content):
-    import html_report
+    from . import html_report
 
     (output / "report.html").write_text(html_report.render_report(content), encoding="utf-8")
     # Relative data links in the latest report must point into its history folder.

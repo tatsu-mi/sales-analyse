@@ -6,9 +6,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import analysis_pipeline as pipeline
-import mail_analyzer as app
-import prioritization as priority
+from sales_analyze import analysis_pipeline as pipeline
+from sales_analyze import mail_analyzer as app
+from sales_analyze import prioritization as priority
 
 
 class PriorityTests(unittest.TestCase):

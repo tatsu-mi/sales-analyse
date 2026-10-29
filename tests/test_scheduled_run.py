@@ -6,8 +6,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
-import mail_analyzer as app
-import scheduled_run as scheduled
+from sales_analyze import mail_analyzer as app
+from sales_analyze import scheduled_run as scheduled
 
 
 class TeamsTests(unittest.TestCase):

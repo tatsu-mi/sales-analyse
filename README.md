@@ -2,7 +2,7 @@
 
 ## セットアップ
 
-Python 3.11以上。PowerShellで実行します。
+Python 3.11以上。プロジェクトのルートでPowerShellから実行します。
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -31,17 +31,17 @@ SharePointから `engineers.md`・`priority_rules.md` をダウンロードし�
 ## ローカル実行
 
 ```powershell
-python validate_config.py
-python mail_analyzer.py
+python -m sales_analyze.validate_config
+python -m sales_analyze.mail_analyzer
 
 # 期間指定
-python mail_analyzer.py --start 2026-10-01 --end 2026-10-15
+python -m sales_analyze.mail_analyzer --start 2026-10-01 --end 2026-10-15
 
 # メール取得のみ
-python mail_analyzer.py --fetch-only
+python -m sales_analyze.mail_analyzer --fetch-only
 
 # Teams接続テスト
-python scheduled_run.py --test-notification
+python -m sales_analyze.scheduled_run --test-notification
 ```
 
 結果：`output/report.html` をブラウザーで開きます。別設定は `--config`、ログ保存は `--log-file` で指定します。
@@ -54,13 +54,13 @@ SharePointから取得する場合は、Azure CLIをインストールしてロ�
 az login --tenant "テナントID" --allow-no-subscriptions
 
 # 一時ファイルIDを指定。最新のプロフィール・ルールをSharePointから取得
-python rematch.py --run-id 123456789-1
+python -m sales_analyze.rematch --run-id 123456789-1
 
 # ローカルの分析結果を使用（SharePoint接続不要）
-python rematch.py --source-dir output/元の分析結果フォルダ
+python -m sales_analyze.rematch --source-dir output/元の分析結果フォルダ
 
 # 保存済みメールの本文抽出から再開
-python rematch.py --source-dir output/元の分析結果フォルダ --start-from extraction
+python -m sales_analyze.rematch --source-dir output/元の分析結果フォルダ --start-from extraction
 ```
 
 再開地点は `--start-from` で指定します。

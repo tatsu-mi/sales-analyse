@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest.mock import call, patch
 
-import sharepoint_reports as reports
+from sales_analyze import sharepoint_reports as reports
 
 
 class ReportsFolderTests(unittest.TestCase):

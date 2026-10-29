@@ -1,6 +1,6 @@
 import unittest
 
-from evaluate_matching import evaluate
+from sales_analyze.evaluate_matching import evaluate
 
 
 class EvaluationTests(unittest.TestCase):

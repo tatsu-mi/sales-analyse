@@ -15,10 +15,10 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 import zipfile
 
-import mail_analyzer as app
-import scheduled_run
-import sharepoint_reports
-import run_progress
+from . import mail_analyzer as app
+from . import scheduled_run
+from . import sharepoint_reports
+from . import run_progress
 
 
 class Store:
