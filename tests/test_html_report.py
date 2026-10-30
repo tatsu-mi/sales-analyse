@@ -58,7 +58,7 @@ class HtmlReportTests(unittest.TestCase):
                 report = path.read_text(encoding='utf-8')
                 parsed = ParsedReport(report)
                 self.assertEqual([link for link in parsed.links if link.startswith('#')],
-                                 ['#project-1-1', '#project-3-1'])
+                                 ['#project-1-1', '#project-3-1', '#report-top'])
                 self.assertEqual(parsed.heading_ids, ['project-1-1', 'project-3-1'])
                 self.assertIn('>[案件](https://example.com) *開発* &lt;確認&gt; C:\\work</a>', report)
                 self.assertIn('[本文](#project-1-1)', ''.join(parsed.source))
@@ -82,12 +82,12 @@ class HtmlReportTests(unittest.TestCase):
                 '```\n## 見出し\n**強調**\n[資料](ranked_emails.json)\n'}
         report = html_report.render_report(prioritization.render_source_mail(mail))
         parsed = ParsedReport(report)
-        expected = ('件名: ' + mail['subject'] + '\n送信元: ' + mail['from']
+        expected = ('件名: ' + mail['subject'] + '\n受信日時: 不明\n送信元: ' + mail['from']
                     + '\n宛先: 宛先\n\n' + mail['body'])
         self.assertEqual(''.join(parsed.source), expected)
         self.assertNotIn('script', parsed.tags)
         self.assertNotIn('img', parsed.tags)
-        self.assertEqual(parsed.links, [])
+        self.assertEqual(parsed.links, ['#report-top'])
         self.assertEqual(parsed.details, [{'class': 'source-mail-details'}])
         self.assertIn('<summary>参照元メール</summary><pre class="source-mail">', report)
         self.assertIn('</pre></details>', report)
@@ -98,7 +98,7 @@ class HtmlReportTests(unittest.TestCase):
             '[危険](javascript:alert) [外部](https://example.com/report)\n'
             '<svg onload="alert(1)">')
         parsed = ParsedReport(report)
-        self.assertEqual(parsed.links, ['https://example.com/report'])
+        self.assertEqual(parsed.links, ['https://example.com/report', '#report-top'])
         self.assertNotIn('svg', parsed.tags)
 
     def test_history_and_latest_html_rewrite_only_generated_data_links(self):
@@ -111,8 +111,8 @@ class HtmlReportTests(unittest.TestCase):
             self.assertFalse((output.parent / 'report.md').exists())
             history = ParsedReport((output / 'report.html').read_text(encoding='utf-8'))
             latest = ParsedReport((output.parent / 'report.html').read_text(encoding='utf-8'))
-            self.assertEqual(history.links, ['ranked_emails.json'])
-            self.assertEqual(latest.links, ['run/ranked_emails.json'])
+            self.assertEqual(history.links, ['ranked_emails.json', '#report-top'])
+            self.assertEqual(latest.links, ['run/ranked_emails.json', '#report-top'])
             self.assertEqual(history.source, latest.source)
             self.assertEqual(history.details, [{'class': 'source-mail-details'}])
             self.assertEqual(latest.details, history.details)

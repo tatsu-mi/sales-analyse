@@ -142,6 +142,24 @@ class PriorityTests(unittest.TestCase):
 
 
 class SourceMailTests(unittest.TestCase):
+    def test_source_includes_received_datetime_in_markdown_and_html(self):
+        received_at = '2026-10-30T08:50:18+09:00'
+        source = priority.render_source_mail({'received_at': received_at, 'body': '元本文'})
+        self.assertIn(f'受信日時: {received_at}\n', source)
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / 'run'
+            output.mkdir()
+            app.save_report_files(output, source)
+            report = (output / 'report.html').read_text(encoding='utf-8')
+            self.assertIn(f'受信日時: {received_at}\n', report)
+
+    def test_source_without_received_datetime_is_explicit(self):
+        for received_at in (None, ''):
+            with self.subTest(received_at=received_at):
+                source = priority.render_source_mail({'received_at': received_at, 'body': '元本文'})
+                self.assertIn('受信日時: 不明\n', source)
+        self.assertIn('受信日時: 不明\n', priority.render_source_mail({'body': '元本文'}))
+
     def test_source_is_literal_and_fence_cannot_be_closed_by_mail(self):
         mail = {"subject": "案件 <確認>", "from": "sender@example.com", "to": "receiver@example.com",
                 "body": "元本文\r\n\r\n```\r\n# 見出し\r\n  空白と|記号 <tag>", "body_truncated": False}

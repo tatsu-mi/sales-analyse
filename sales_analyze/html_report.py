@@ -98,12 +98,17 @@ def render_report(content):
 * { box-sizing: border-box; }
 body { margin: 0; color: #243247; background: #f1f5f9;
        font-family: "Yu Gothic", "Meiryo", sans-serif; line-height: 1.8; }
-main { max-width: 1120px; margin: 32px auto; padding: 32px;
+main { max-width: 1120px; margin: 32px auto 96px; padding: 32px;
        background: #fff; border-radius: 12px; overflow-wrap: anywhere; }
 h1 { font-size: 1.8rem; color: #163b65; }
 h2 { margin-top: 2.5rem; padding-bottom: .4rem; border-bottom: 2px solid #cbd5e1; }
 h3 { margin-top: 2rem; padding: .7rem 1rem; background: #edf4fb; border-left: 4px solid #2864a0; }
 a { color: #185a9d; }
+.back-to-top { position: fixed; right: 104px; bottom: 16px; z-index: 10;
+               padding: 10px 16px; border-radius: 24px; background: #185a9d;
+               color: #fff; text-decoration: none; box-shadow: 0 2px 8px #0003; }
+.back-to-top:hover { background: #163b65; }
+.back-to-top:focus-visible { outline: 3px solid #163b65; outline-offset: 3px; }
 .source-mail-details { margin: 1rem 0; }
 .source-mail-details summary { cursor: pointer; color: #185a9d; }
 .source-mail { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit;
@@ -112,10 +117,11 @@ a { color: #185a9d; }
 table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
 th, td { border: 1px solid #cbd5e1; padding: .6rem .8rem; text-align: left; vertical-align: top; }
 th { background: #edf4fb; }
-@media (max-width: 640px) { main { margin: 0; padding: 16px; border-radius: 0; } }
+@media (max-width: 640px) { main { margin: 0 0 96px; padding: 16px; border-radius: 0; } }
 @media print { body { background: #fff; } main { margin: 0; padding: 0; max-width: none; }
+               .back-to-top { display: none; }
                h2, h3 { break-after: avoid; } .table-scroll { overflow: visible; } }
 </style>
 </head>
-<body><main>
-''' + '\n'.join(blocks) + '\n</main></body>\n</html>\n'
+<body id="report-top"><main>
+''' + '\n'.join(blocks) + '\n</main>\n<a class="back-to-top" href="#report-top">↑ 上部に戻る</a>\n</body>\n</html>\n'

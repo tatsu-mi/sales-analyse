@@ -157,6 +157,7 @@ def transform_report_text(report, transform):
 def render_source_mail(mail):
     """Keep source text literal, including whitespace and Markdown-like content."""
     content = (f"件名: {mail.get('subject', '')}\n"
+               f"受信日時: {mail.get('received_at') or '不明'}\n"
                f"送信元: {mail.get('from', '')}\n"
                f"宛先: {mail.get('to', '')}\n\n" + mail["body"])
     content = content.replace("\r\n", "\n").replace("\r", "\n")
