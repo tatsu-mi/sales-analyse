@@ -60,6 +60,16 @@ class ConfigurationTests(unittest.TestCase):
         self.path.write_text(self.source.replace('max_emails = 2000\n', ''), encoding='utf-8')
         self.assertEqual(self.load()['analysis']['max_emails'], 2000)
 
+    def test_skill_sheet_model_is_optional_and_validated(self):
+        self.assertNotIn('skill_sheets_model', self.load()['gemini'])
+        self.path.write_text(self.source.replace('[gemini]', '[gemini]\nskill_sheets_model = "pdf-model"'),
+                             encoding='utf-8')
+        self.assertEqual(self.load()['gemini']['skill_sheets_model'], 'pdf-model')
+        for invalid in ('""', 'false', '123', '"bad/model"', '"model with spaces"'):
+            self.path.write_text(self.source.replace('[gemini]', '[gemini]\nskill_sheets_model = ' + invalid),
+                                 encoding='utf-8')
+            with self.subTest(invalid=invalid), self.assertRaises(app.ToolError):
+                self.load()
     def test_matching_weights_have_defaults_and_require_positive_integers(self):
         config = self.load()['analysis']
         self.assertEqual([config['matching_' + k + '_weight'] for k in ('mandatory', 'welcome', 'related')],

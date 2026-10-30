@@ -116,7 +116,7 @@ def load_config(path, *, load_environment=True, load_priority_rules=True):
     allowed = {
         "logging": {"level"},
         "imap": {"port", "folder", "timeout_seconds"},
-        "gemini": {"model", "timeout_seconds", "max_output_tokens", "retries", "retry_base_seconds",
+        "gemini": {"model", "skill_sheets_model", "timeout_seconds", "max_output_tokens", "retries", "retry_base_seconds",
                    "retry_max_wait_seconds", "requests_per_minute", "input_tokens_per_minute"},
         "analysis": {"lookback_hours", "priority_rules_file", "start_date", "end_date", "max_emails",
                      "max_body_chars", "max_message_bytes", "output_dir", "chunk_input_tokens",
@@ -158,6 +158,10 @@ def load_config(path, *, load_environment=True, load_priority_rules=True):
     if (not isinstance(config["gemini"].get("model"), str)
             or not re.fullmatch(r"[a-zA-Z0-9._-]+", config["gemini"]["model"])):
         raise ToolError("gemini.model にモデルIDを設定してください。")
+    if "skill_sheets_model" in config["gemini"] and (
+            not isinstance(config["gemini"]["skill_sheets_model"], str)
+            or not re.fullmatch(r"[a-zA-Z0-9._-]+", config["gemini"]["skill_sheets_model"])):
+        raise ToolError("gemini.skill_sheets_model にモデルIDを設定してください。")
     if config["gemini"]["retry_max_wait_seconds"] < config["gemini"]["retry_base_seconds"]:
         raise ToolError("retry_max_wait_seconds は retry_base_seconds 以上にしてください。")
     teams = config.setdefault("teams", {})
@@ -439,7 +443,10 @@ def api_error_details(error):
 def generation_payload(settings, prompt, file_data=None, response_schema=None):
     parts = [{"text": prompt}]
     if file_data is not None:
-        parts.append({"fileData": {"mimeType": file_data["mimeType"], "fileUri": file_data["uri"]}})
+        if "data" in file_data:
+            parts.append({"inlineData": {"mimeType": file_data["mimeType"], "data": file_data["data"]}})
+        else:
+            parts.append({"fileData": {"mimeType": file_data["mimeType"], "fileUri": file_data["uri"]}})
     payload = {"systemInstruction": {"parts": [{"text": SYSTEM}]},
                "contents": [{"role": "user", "parts": parts}],
                "generationConfig": {"maxOutputTokens": settings["max_output_tokens"]}}
