@@ -12,7 +12,7 @@ timeout_seconds = 60
 
 [gemini]
 # スキルシートPDF解析だけ別モデルを使う場合に指定（省略時はmodel）。
-skill_sheets_model = "gemini-3.6-flash"
+# skill_sheets_model = "gemini-3.6-flash"
 model = "gemini-3.5-flash-lite"
 # API通信のタイムアウト（秒）と、1回の応答に使用する最大出力トークン数。
 timeout_seconds = 180
