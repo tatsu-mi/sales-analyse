@@ -159,7 +159,11 @@ class PipelineTests(unittest.TestCase):
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         entries = ranked['ses_by_engineer'][0]['entries']
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]['engineer_match']['score'], 1)
+        self.assertEqual(entries[0]['engineer_match']['score'], 0.5)
+        part = entries[0]['engineer_match']['score_breakdown'][0]
+        self.assertEqual((part['matched_count'], part['target_count']), (1, 2))
+        self.assertIn('該当数/対象数', report)
+        self.assertIn('1/2', report)
         self.assertIn('AIに再送しない転載用の本文', report)
         extracted = (instance.output / 'extracted_emails.jsonl').read_text(encoding='utf-8')
         self.assertNotIn('source_quote', extracted)

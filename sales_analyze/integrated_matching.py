@@ -7,8 +7,9 @@ import re
 import unicodedata
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 
-VERSION = 4
+VERSION = 5
 EXPERIENCES = ('professional', 'non_professional', 'unknown')
 FIELDS = ('available_from', 'monthly_rate_min', 'residence', 'contract_type', 'nearest_station')
 DEFAULT_WEIGHTS = {'mandatory': 10, 'welcome': 5, 'related': 2}
@@ -292,6 +293,7 @@ def assemble_plan(project, links):
                          keywords=matches[i - 1])
                     for i, req in enumerate(project['mandatory_requirements'], 1)]
     preferences = [dict(id=p['id'], kind=p['kind'], label=p['requirement'],
+                        terms=p['terms'],
                         keywords=matches[len(requirements) + i]) for i, p in enumerate(data['preferences'])]
     return dict(id=links['i'], requirements=requirements, additional_requirements=[],
                 preferences=preferences, complete=data['complete'] and not failed,
@@ -529,7 +531,10 @@ def score(plan, profile, weights, today, commute_result, ids=None):
         # Unknown expressions have no known semantics to safely deduplicate.
         if signature not in signatures or signature == ('unknown',):
             factor = expression_factor(req, profile, today, commute_result)
-            units.append((f'mandatory_{i}', 'mandatory', req['keywords'], factor))
+            terms = {canonical(t) for n in req['nodes'] if n['op'] == 'atom'
+                     and n['field'] == 'skill' for t in n['terms']}
+            count = len(terms) or len(set(req['keywords']))
+            units.append((f'mandatory_{i}', 'mandatory', req['keywords'], factor, count))
             signatures.add(signature)
         used.update(req['keywords'])
     seen = set()
@@ -538,22 +543,26 @@ def score(plan, profile, weights, today, commute_result, ids=None):
         signature = tuple(sorted(keys))
         if keys and signature not in seen:
             seen.add(signature)
-            units.append((pref['id'], pref['kind'], sorted(keys), None))
+            count = len({canonical(t) for t in pref.get('terms', [])}) or len(set(pref['keywords']))
+            units.append((pref['id'], pref['kind'], sorted(keys), None, count))
             used.update(keys)
     breakdown = []
-    for identifier, kind, keys, expression_coefficient in units:
+    totals = []
+    for identifier, kind, keys, expression_coefficient, count in units:
         matched = sorted(set(keys) & factors.keys())
-        factor = max((factors[k] for k in matched), default=0)
-        if expression_coefficient is not None:
-            factor = min(factor, expression_coefficient)
         if matched:
+            coefficients = [min(factors[k], expression_coefficient)
+                            if expression_coefficient is not None else factors[k] for k in matched]
+            # Keep unmatched terms in the denominator, even outside the career dictionary.
+            count = max(count, len(set(keys)))
+            points = Fraction(weights[kind]) * Fraction(sum(coefficients), 10 * count)
+            totals.append(points)
             breakdown.append(dict(requirement=identifier, kind=kind, keywords=matched,
                                   keyword_names=[names[k] for k in matched],
-                                  weight=weights[kind], factor=factor / 10,
-                                  points=weights[kind] * factor / 10))
-    # Integer tenths internally avoid float errors affecting ordering.
-    total = sum(round(b['points'] * 10) for b in breakdown)
-    return total / 10, breakdown
+                                  weight=weights[kind], factor=sum(coefficients) / (10 * len(matched)),
+                                  matched_count=len(matched), target_count=count,
+                                  points=float(points)))
+    return float(sum(totals, Fraction())), breakdown
 
 
 def assess(plan, item, profile, today, weights, ids=None):

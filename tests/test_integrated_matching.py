@@ -177,7 +177,7 @@ class MatchingTests(unittest.TestCase):
         self.item['project']['mandatory_requirements'].append(
             dict(requirement='Python', category='skill', source_quote='Python'))
         result = self.assess()
-        self.assertEqual(result['score'], 17)
+        self.assertEqual(result['score'], 16)
         self.assertEqual(len(result['score_breakdown']), 3)
 
     def test_or_scoring_uses_the_experience_that_actually_satisfies_requirement(self):
@@ -193,6 +193,36 @@ class MatchingTests(unittest.TestCase):
     def test_future_periods_do_not_supply_unearned_experience(self):
         self.person['facts'] = [fact(months=24, duration_kind='period', start='2026-01', end='2027-12')]
         self.assertEqual(self.check(expression(atom(months=12))), 'unknown')
+
+    def test_listed_targets_share_weight_even_when_absent_from_dictionary(self):
+        terms = ['組込ソフト', 'C言語', 'C++', 'UI', 'C#', 'Unity', 'Unreal Engine']
+        for kind in ('mandatory', 'welcome', 'related'):
+            for matched_count in (1, 2, 7):
+                with self.subTest(kind=kind, matched_count=matched_count):
+                    project = dict(mandatory_requirements=[dict(terms=terms, operator='any',
+                        experience='any', min_months=0)] if kind == 'mandatory' else [],
+                        matching=dict(preferences=[] if kind == 'mandatory' else [dict(kind=kind, terms=terms)],
+                                      complete=True, unassessed_requirements=[], commute=self.plan['commute']))
+                    matching.validate_structure(project)
+                    person = career(facts=[fact((term,)) for term in terms[:matched_count]])
+                    ids = {matching.canonical(term): i for i, term in enumerate(terms[:matched_count])}
+                    linked = matching.assemble_plan(project, dict(i=0, m=[list(ids.values())]))
+                    points, parts = matching.score(linked, person, matching.DEFAULT_WEIGHTS,
+                                                   self.today, ('match', {}), ids)
+                    self.assertAlmostEqual(points, matching.DEFAULT_WEIGHTS[kind] * matched_count / 7)
+                    self.assertEqual(parts[0]['matched_count'], matched_count)
+                    self.assertEqual(parts[0]['target_count'], 7)
+                    self.assertEqual(points, sum(part['points'] for part in parts))
+
+    def test_each_listed_skill_uses_its_own_experience_factor(self):
+        self.plan['requirements'] = []
+        self.plan['preferences'] = [dict(id='skills', kind='welcome',
+            terms=['Python', 'Java', 'SQL'], keywords=['python', 'java', 'sql'])]
+        self.person['facts'] = [fact(), fact(('Java',), experience='non_professional')]
+        points, parts = matching.score(self.plan, self.person, matching.DEFAULT_WEIGHTS,
+                                       self.today, ('match', {}))
+        self.assertAlmostEqual(points, 5 * (1 + 0.1) / 3)
+        self.assertEqual(parts[0]['target_count'], 3)
 
     def test_commute_atom_uses_same_deterministic_check_as_global_policy(self):
         self.plan['requirements'][0] = dict(expression(dict(id='a', op='atom', field='commute')),

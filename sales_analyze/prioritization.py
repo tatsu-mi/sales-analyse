@@ -197,7 +197,7 @@ def render_report(ranked, rules):
              order + "不明条件は要確認として扱います。",
              "同じメールに複数案件がある場合は、カテゴリごとに最も適合する案件で代表します。", ""]
     if "ses_by_engineer" in ranked:
-        lines += [f"個人別の案件は適合確認済みを優先し、各判定の中で要件ごとの重みの合計点数順に選定します。要確認も含めて合計で上位{rules['top_n']}件までとします。実務以外の加点は実務の0.1倍とし、同義語や同じ経験の重複加点は行いません。", ""]
+        lines += [f"個人別の案件は適合確認済みを優先し、各判定の中で要件ごとの重みの合計点数順に選定します。要確認も含めて合計で上位{rules['top_n']}件までとします。基準点を加点対象の項目数で等分し、一致した項目の経験係数を掛けて合算します。実務以外の加点は実務の0.1倍とし、同義語や同じ経験の重複加点は行いません。", ""]
         lines += ["priority_rules.mdのSES条件は全エンジニアに共通で適用し、engineers.mdの各人のスキル・通勤条件を追加判定します。", ""]
         lines += ["必須条件・共通条件・通勤条件を全て確認できた案件だけを適合確認済みとします。各案件に適合・要確認の判定を表示します。同じ案件が複数エンジニアの候補に入る場合があります。", ""]
         lines += ["勤務地は最寄り駅から片道90分以内、または出社不要のフルリモートを必須とします。通勤時間が確認できない案件は要確認です。", ""]
@@ -218,10 +218,11 @@ def render_report(ranked, rules):
                 match = entry['engineer_match']
                 if 'score' in match:
                     lines += [f"マッチング得点: {match['score']:g}点", "",
-                              "| 加点対象 | 種類 | スキル | 基準点 | 経験係数 | 得点 |",
-                              "| --- | --- | --- | --- | --- | --- |"]
+                              "| 加点対象 | 種類 | スキル | 基準点 | 該当数/対象数 | 経験係数 | 得点 |",
+                              "| --- | --- | --- | --- | --- | --- | --- |"]
                     for part in match.get('score_breakdown', []):
-                        lines.append(f"| {text(part.get('label', part['requirement']))} | {text(part['kind'])} | {text(', '.join(part.get('keyword_names', part['keywords'])))} | {part['weight']} | {part['factor']:g} | {part['points']:g} |")
+                        coverage = f"{part['matched_count']}/{part['target_count']}" if 'target_count' in part else '—'
+                        lines.append(f"| {text(part.get('label', part['requirement']))} | {text(part['kind'])} | {text(', '.join(part.get('keyword_names', part['keywords'])))} | {part['weight']} | {coverage} | {part['factor']:g} | {part['points']:g} |")
                     lines.append('')
                 checks = entry['engineer_match'].get('requirements', [])
                 lines += [f"必須条件の適合: {sum(check['state'] == 'match' for check in checks)}/{len(checks)}（一致率・精度の評価値ではありません）", "",
