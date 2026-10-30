@@ -67,17 +67,17 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(len(profiles), 16)
         self.assertEqual(len({p['file'] for p in profiles}), 16)
 
-    def test_feedback_is_personal_separate_from_skill_evidence_and_invalidates_own_cache(self):
+    def test_conditions_are_personal_separate_from_skill_evidence_and_invalidate_own_cache(self):
         path = self.root / 'engineers.md'
-        text = ('## A\nPython実務4年\n\n### マッチングフィードバック\n'
+        text = ('## A\nPython実務4年\n\n### 追加条件\n'
                 '- 案件X：不適合。リーダー経験不足。\n\n### 資格\n基本情報\n\n'
-                '## B\nJava実務2年\n\n### マッチングフィードバック\n<!-- 記入案内 -->\n')
+                '## B\nJava実務2年\n\n### 追加条件\n<!-- 記入案内 -->\n')
         path.write_text(text, encoding='utf-8')
         first, second = matching.load_profiles(path)
-        self.assertIn('案件X', first['feedback'])
+        self.assertIn('案件X', first['additional_conditions'])
         self.assertNotIn('案件X', first['text'])
         self.assertIn('基本情報', first['text'])
-        self.assertEqual(second['feedback'], '')
+        self.assertEqual(second['additional_conditions'], '')
         self.assertNotIn('案件X', json.dumps(second, ensure_ascii=False))
         path.write_text(text.replace('リーダー経験不足', '年数不足'), encoding='utf-8')
         updated = matching.load_profiles(path)
@@ -85,22 +85,22 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(first['text'], updated[0]['text'])
         self.assertEqual(second['sha256'], updated[1]['sha256'])
 
-    def test_feedback_cannot_be_used_as_experience_evidence(self):
+    def test_conditions_cannot_be_used_as_experience_evidence(self):
         path = self.root / 'engineers.md'
-        path.write_text('## A\nJava実務1年\n\n### マッチングフィードバック\n'
+        path.write_text('## A\nJava実務1年\n\n### 追加条件\n'
                         '以前Python実務4年、基本設計2年と誤判定された。', encoding='utf-8')
         profile = matching.load_profiles(path)[0]
         self.assertNotIn('Python', profile['text'])
-        self.assertIn('Python', profile['feedback'])
+        self.assertIn('Python', profile['additional_conditions'])
 
-    def test_empty_feedback_and_duplicate_sections(self):
+    def test_empty_conditions_and_duplicate_sections(self):
         path = self.root / 'engineers.md'
-        path.write_text('## A\nPython\n\n### マッチングフィードバック', encoding='utf-8')
+        path.write_text('## A\nPython\n\n### 追加条件', encoding='utf-8')
         profile = matching.load_profiles(path)[0]
-        self.assertEqual(profile['feedback'], '')
-        self.assertNotIn('フィードバック', profile['text'])
+        self.assertEqual(profile['additional_conditions'], '')
+        self.assertNotIn('追加条件', profile['text'])
         with path.open('a', encoding='utf-8') as file:
-            file.write('\n\n### マッチングフィードバック\n追記')
+            file.write('\n\n### 追加条件\n追記')
         with self.assertRaisesRegex(ValueError, '重複'):
             matching.load_profiles(path)
 

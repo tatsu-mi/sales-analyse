@@ -23,7 +23,7 @@ class SkillSheetTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.work = Path(self.tmp.name)
         self.old = (sheets.render_sheet(record(), 'A.pdf')
-                    .replace('<!-- 判定・理由を追記してください。 -->', '- 高単価は避ける'))
+                    .replace('<!-- 必ず満たす条件を箇条書きで記載してください。 -->', '- 高単価は避ける'))
         self.store = Mock()
         self.store.request.return_value = self.old.encode()
         self.settings = dict(max_output_tokens=1000, requests_per_minute=5, input_tokens_per_minute=10000)
@@ -42,7 +42,7 @@ class SkillSheetTests(unittest.TestCase):
     def output(self):
         return self.store.put.call_args.args[1].decode()
 
-    def test_append_preserves_existing_feedback_and_only_analyses_new_pdf(self):
+    def test_append_preserves_existing_conditions_and_only_analyses_new_pdf(self):
         self.run_update('append')
         self.assertEqual(self.analyse.call_count, 1)
         self.assertTrue(self.output().startswith(self.old))
@@ -52,9 +52,9 @@ class SkillSheetTests(unittest.TestCase):
         path.write_text(self.output(), encoding='utf-8')
         profiles = engineer_matching.load_profiles(path)
         self.assertEqual(len(profiles), 2)
-        self.assertEqual(profiles[0]['feedback'], '- 高単価は避ける')
+        self.assertEqual(profiles[0]['additional_conditions'], '- 高単価は避ける')
 
-    def test_overwrite_replaces_old_sections_and_feedback(self):
+    def test_overwrite_replaces_old_sections_and_conditions(self):
         self.analyse.side_effect = [record('A'), record('B')]
         self.run_update('overwrite')
         self.assertEqual(self.analyse.call_count, 2)

@@ -115,7 +115,7 @@ def render_sheet(record, filename):
             + '- **最寄り駅**：' + station + '\n\n'
             + '### マッチング用特徴\n\n```json\n'
             + json.dumps(facts, ensure_ascii=False, indent=2) + '\n```\n\n'
-            + '### マッチングフィードバック\n\n<!-- 判定・理由を追記してください。 -->\n')
+            + '### 追加条件\n\n<!-- 必ず満たす条件を箇条書きで記載してください。 -->\n')
 
 
 def validate_markdown(text):

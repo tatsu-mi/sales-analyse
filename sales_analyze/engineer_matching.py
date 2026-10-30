@@ -1,4 +1,4 @@
-"""Read isolated career sheet sections and personal feedback."""
+"""Read isolated career sheets and mandatory personal conditions."""
 import hashlib
 import json
 import re
@@ -31,20 +31,20 @@ def load_profiles(path):
         if career_id in identities:
             raise ValueError('キャリアシートIDが重複しています。見出しの資料名を確認してください。')
         identities.add(career_id)
-        feedback_sections = list(re.finditer(
-            r'^###[ \t]+マッチングフィードバック[ \t]*(?:\n|\Z)(.*?)(?=^###[ \t]+|\Z)', body, re.MULTILINE | re.DOTALL))
-        if len(feedback_sections) > 1:
-            raise ValueError(f'{name} のマッチングフィードバック見出しが重複しています。')
-        feedback = ''
-        if feedback_sections:
-            match = feedback_sections[0]
-            feedback = re.sub(r'<!--.*?-->', '', match[1], flags=re.DOTALL).strip()
+        condition_sections = list(re.finditer(
+            r'^###[ \t]+追加条件[ \t]*(?:\n|\Z)(.*?)(?=^###[ \t]+|\Z)', body, re.MULTILINE | re.DOTALL))
+        if len(condition_sections) > 1:
+            raise ValueError(f'{name} の追加条件見出しが重複しています。')
+        conditions = ''
+        if condition_sections:
+            match = condition_sections[0]
+            conditions = re.sub(r'<!--.*?-->', '', match[1], flags=re.DOTALL).strip()
             body = (body[:match.start()] + body[match.end():]).strip()
         if not body:
             raise ValueError(f'{name} のプロフィール本文がありません。')
         section = '\n\n'.join((preamble, '## ' + name, body))
-        identity = json.dumps(dict(text=section, feedback=feedback), ensure_ascii=False, sort_keys=True)
+        identity = json.dumps(dict(text=section, additional_conditions=conditions), ensure_ascii=False, sort_keys=True)
         profiles.append({'file': name, 'name': name, 'id': career_id, 'source': path.name,
                          'sha256': hashlib.sha256(identity.encode('utf-8')).hexdigest(),
-                         'text': section, 'feedback': feedback})
+                         'text': section, 'additional_conditions': conditions})
     return profiles

@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from sales_analyze import analysis_pipeline as pipeline
 from sales_analyze import integrated_matching as matching
+from sales_analyze import additional_conditions
 from sales_analyze import run_progress
 from sales_analyze import scheduled_run
 import test_analysis_pipeline as harness
@@ -23,9 +24,18 @@ class IntegratedPipelineTests(unittest.TestCase):
         self.project_transform = lambda record, item: record
         self.fail_batch = False
         self.invalid_project = None
+        self.condition_states = {}
+        self.condition_calls = []
 
     def generate(self, *args, **kwargs):
         schema = kwargs.get('response_schema')
+        if schema == additional_conditions.SCHEMA:
+            kwargs['before_request']()
+            items = [json.loads(line) for line in self.h.uploads[kwargs['file_data']['uri']].splitlines()]
+            self.condition_calls.extend(items)
+            return json.dumps({'records': [dict(id=item['id'], checks=[
+                dict(criterion=i, state=self.condition_states.get(item['project']['project_id'], 'match'),
+                     reason='案件の単価条件を確認') for i, _ in enumerate(item['conditions'], 1)]) for item in items]})
         if schema == pipeline.EXTRACTION_SCHEMA:
             # Conditions and raw-source checks now belong to the first analysis.
             items = [json.loads(line) for line in self.h.uploads[kwargs['file_data']['uri']].splitlines()]
@@ -63,7 +73,7 @@ class IntegratedPipelineTests(unittest.TestCase):
             self.project_calls.extend(items)
             # Individual information must never appear in a project request.
             self.assertNotIn('career_', args[2])
-            self.assertNotIn('personal-feedback', args[2])
+            self.assertNotIn('additional_conditions', args[2])
             dictionary = {entry['n']: entry['i'] for entry in json.loads(args[2].split('\nk: ', 1)[1])}
             records = [dict(i=item['i'], m=[
                 [dictionary['python']] if 'python' in u['k'] else [] for u in item['u']]) for item in items]
@@ -88,9 +98,42 @@ class IntegratedPipelineTests(unittest.TestCase):
         instance = self.h.make(mails)
         self.instance = instance
         instance.profiles = profiles if profiles is not None else [
-            dict(file=name, name=name, sha256=name, text='Python', feedback='personal-feedback')
+            dict(file=name, name=name, sha256=name, text='Python', additional_conditions='')
             for name in ('A', 'B')]
         return instance
+
+    def test_personal_conditions_exclude_mismatch_and_unknown_only_for_target_person(self):
+        instance = self.make(self.setup_projects(3))
+        instance.profiles[0]['additional_conditions'] = '- 月額50万円以下'
+        self.condition_states = {'P-0': 'match', 'P-1': 'mismatch', 'P-2': 'unknown'}
+        report = instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        groups = ranked['ses_by_engineer']
+        self.assertEqual([e['latest']['project_id'] for e in groups[0]['entries']], ['P-0'])
+        self.assertEqual(len(groups[1]['entries']), 3)
+        self.assertEqual(len(self.condition_calls), 3)
+        self.assertTrue(all(item['conditions'] == ['月額50万円以下'] for item in self.condition_calls))
+        self.assertTrue(all('月額50万円' not in item['text'] for item in self.profile_calls))
+        self.assertIn('追加条件:', report)
+        audit = json.loads((instance.output / 'engineer_assessments.json').read_text(encoding='utf-8'))
+        own = [entry for entry in audit if entry['engineer'] == 'A']
+        self.assertEqual([entry['assessment']['additional_conditions'][0]['state'] for entry in own],
+                         ['match', 'mismatch', 'unknown'])
+
+    def test_failed_additional_condition_assessment_is_excluded(self):
+        instance = self.make(self.setup_projects(1))
+        instance.profiles[0]['additional_conditions'] = '- 月額50万円以下'
+        original = self.h.api.generate
+        def generate(*args, **kwargs):
+            if kwargs.get('response_schema') == additional_conditions.SCHEMA:
+                kwargs['before_request']()
+                return '{"records": []}'
+            return original(*args, **kwargs)
+        self.h.api.generate = generate
+        instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        self.assertEqual(ranked['ses_by_engineer'][0]['entries'], [])
+        self.assertEqual(len(ranked['ses_by_engineer'][1]['entries']), 1)
 
     def test_each_ses_project_matched_once_for_all_people_and_contract_is_omitted(self):
         instance = self.make(self.setup_projects(15, contract=True))

@@ -4,6 +4,7 @@ from __future__ import annotations
 from . import prioritization
 from . import title_filter
 from . import engineer_matching
+from . import additional_conditions
 from . import integrated_matching
 from . import run_progress
 import hashlib
@@ -20,7 +21,7 @@ from uuid import uuid4
 
 LOGGER = logging.getLogger("mail_analyzer.analysis")
 
-VERSION = 7
+VERSION = 8
 # Quote-free profile extraction has its own cache identity.
 PROFILE_CACHE_VERSION = 7
 MAX_ANALYSIS_EMAILS = 1000
@@ -786,14 +787,25 @@ class Pipeline:
         for index, (profile, facts) in enumerate(zip(self.profiles, structured), 1):
             eligible = []
             factors = integrated_matching.keyword_factors(facts, keyword_ids)
+            conditions = additional_conditions.parse(profile.get('additional_conditions', ''))
+            condition_records = []
+            if conditions:
+                condition_items = [dict(id=str(item['id']), conditions=conditions,
+                    profile=profile['text'], project=item['project'],
+                    source_truncated=item['source_truncated']) for item in items]
+                condition_records = self.shared_records(condition_items, additional_conditions.PROMPT,
+                    additional_conditions.SCHEMA, additional_conditions.validate,
+                    'additional_conditions', additional_conditions.fallback)
             run_progress.report('engineer_start', index=index, total=len(self.profiles), count=len(candidates))
-            for value, item, plan in zip(candidates, items, plans):
+            for project_index, (value, item, plan) in enumerate(zip(candidates, items, plans)):
                 linked = {key for req in plan['requirements'] + plan['additional_requirements'] for key in req['keywords']}
                 linked.update(key for pref in plan['preferences'] for key in pref['keywords'])
                 if (not (linked & factors.keys()) and not facts.get('_failed') and not plan.get('_failed')
                         and plan['complete'] and facts['complete']):
                     continue
                 check = integrated_matching.assess(plan, item, facts, today, weights, keyword_ids)
+                conditions_met = not conditions or additional_conditions.apply(
+                    check, condition_records[project_index], conditions)
                 if check['state'] == 'match' and not all(c['state'] == 'match' for c in value['latest']['assessments']):
                     check['state'] = 'unknown'
                     check['evidence'] += ' 共通条件に未確認項目があります。'
@@ -805,7 +817,7 @@ class Pipeline:
                 audit.append(dict(engineer=profile['file'], career_id=facts['id'], uid=value['uid'],
                     project_key=value.get('project_key', item['id']), project_id=latest['project_id'],
                     title=latest['title'], state=check['state'], assessment=check))
-                if check['state'] != 'mismatch':
+                if check['state'] != 'mismatch' and conditions_met:
                     eligible.append(entry)
             group = dict(file=profile['file'], name=profile.get('name', profile['file']),
                          career_id=facts['id'], sha256=profile['sha256'],
