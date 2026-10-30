@@ -22,7 +22,9 @@ SCHEMA = matching.obj({'name': matching.STRING,
        if k != 'id'}})
 PROMPT = matching.PROFILE_PROMPT.replace(
     '入力はキャリアシートのデータです。各idをrecordsに一度ずつ返す。',
-    '入力は一人分のキャリアシートPDFです。スキーマに従う単一オブジェクトを返す。') + """
+    '入力は一人分のキャリアシートPDFです。スキーマに従う単一オブジェクトを返す。').replace(
+    'completeは抽出完了ならtrue、未処理の情報があればunassessed_informationに短いキーワードを残す。',
+    'completeとunassessed_informationは下記のPDF抽出完了基準に従う。') + """
 添付PDF一件だけを読み、配列やrecordsではなく一人分のオブジェクトを返す。idは不要。
 nameは資料に記載された氏名またはイニシャル。不明なら空文字。
 技術・工程・業務知識・役割・ヒューマンスキルを省略せず整理する。
@@ -36,6 +38,21 @@ duration_kind=totalならstart/endは両方空文字。期間が明記されて�
 duration_kind=period、start/endは両方YYYY-MM。片方しか不明なら両方空文字とする。
 稼働開始日はYYYY-MM-DD、最低月額は円単位の数値文字列のみ。
 日付や金額の指定形式へ確定できない情報はattributesへ含めない。
+
+PDF抽出完了基準:
+completeは、PDFに記載されたマッチング対象の情報を読み取り、スキーマへ抽出できたかを表す。
+資料にない情報の不足や、案件への適合を確認できないことは「未処理」ではない。
+稼働開始日・希望単価・居住国・契約種別・通勤経路の記載がなければ省略してよい。
+経験年数や実務区分の記載がなければmonths=-1、experience=unknown等の既定の不明値で表す。
+これらを正しく不明として抽出できた場合、complete=true、unassessed_information=[]とする。
+氏名と最寄り駅の必須検証は別途プログラムが行う。記載がなければ推測せず空文字・省略で返す。
+住所の番地、電話番号、メールアドレス、顔写真、装飾、押印等のマッチング対象外の情報を
+抽出しないことも未処理ではない。PDFの全項目を転記する必要はない。
+記載済みのスキル・担当業務・経験期間・稼働条件等を、読めないページや表、
+解釈できない記述、処理の中断などにより抽出できなかった場合のみcomplete=falseとする。
+その場合unassessed_informationには「3ページの案件表が判読できない」など、
+対象箇所と抽出できない理由を簡潔に記載する。抽出済みの不明値や任意項目の未記載は列挙しない。
+エラーを避けるために実際の読み取り失敗を隠したり、未処理情報を空にしてはならない。
 """
 
 
@@ -100,7 +117,9 @@ def validate_sheet(record):
                             for s in stations)):
         raise ValueError('最寄り駅の明示記載が必要です。')
     if not record['complete'] or record['unassessed_information']:
-        raise ValueError('PDFに未処理の情報があります。')
+        details = json.dumps(dict(complete=record['complete'],
+            unassessed_information=record['unassessed_information']), ensure_ascii=False)
+        raise ValueError('PDFに未処理の情報があります。' + details)
     if not record['facts']:
         raise ValueError('PDFから特徴を抽出できませんでした。')
     return record

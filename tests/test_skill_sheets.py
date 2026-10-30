@@ -172,6 +172,31 @@ class SkillSheetTests(unittest.TestCase):
                 self.real_analyse(b'%PDF-test', self.settings, 'key', Mock(), {'inputTokenLimit': 5000})
             self.assertEqual(generate.call_count, 2)
 
+    def test_incomplete_pdf_reports_issues_in_retry_and_final_error(self):
+        invalid = record()
+        invalid.update(complete=False, unassessed_information=['3ページの案件表が判読できない'])
+        with patch.object(app, 'count_input_tokens', return_value=100), patch.object(
+                app, 'generate', return_value=json.dumps(invalid)) as generate:
+            with self.assertRaisesRegex(ValueError, '再解析後.*3ページの案件表が判読できない') as error:
+                self.real_analyse(b'%PDF-test', self.settings, 'key', Mock(), {'inputTokenLimit': 5000})
+            self.assertIn('"complete": false', str(error.exception))
+            self.assertIn('3ページの案件表が判読できない', generate.call_args.args[2])
+            self.assertEqual(generate.call_count, 2)
+
+    def test_unknown_optional_information_does_not_prevent_valid_extraction(self):
+        value = record()
+        value['facts'][0].update(months=-1, duration_kind='unknown', start='', end='', experience='unknown')
+        # All optional attributes absent; station remains mandatory.
+        self.assertEqual(sheets.validate_sheet(value), value)
+        value['complete'] = False
+        with self.assertRaisesRegex(ValueError, r'"complete": false.*"unassessed_information": \[\]'):
+            sheets.validate_sheet(value)
+
+    def test_completion_prompt_distinguishes_unstated_information_from_unread_pages(self):
+        self.assertIn('資料にない情報の不足', sheets.PROMPT)
+        self.assertIn('対象箇所と抽出できない理由', sheets.PROMPT)
+        self.assertNotIn('未処理の情報があればunassessed_informationに短いキーワードを残す', sheets.PROMPT)
+
     def test_listing_paginates_and_filters_files(self):
         self.store.base = 'https://graph.microsoft.com/v1.0/drives/d/items/f'
         next_url = 'https://graph.microsoft.com/v1.0/drives/d/items/f/children?$skiptoken=abc'
