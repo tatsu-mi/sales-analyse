@@ -6,7 +6,7 @@
 
 `SHAREPOINT_FOLDER_ID` のフォルダ直下に `対象者スキルシート/` を作り、一人につき一つのPDFを配置します。サブフォルダは探索しません。出力先は同じ親フォルダの `engineers.md` です。PDFは1件50MB以下とし、モデルの入力上限内に収めてください。
 
-GitHub Actionsの **Update engineers from skill sheets → Run workflow** で更新方式を選択します。
+GitHub Actionsの **スキルシート解析・エンジニア一覧更新 → Run workflow** で更新方式を選択します。
 
 | `mode` | 動作 |
 | --- | --- |

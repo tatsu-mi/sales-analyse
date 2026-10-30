@@ -1,4 +1,4 @@
-name: SharePoint upload and Teams notification test
+name: SharePoint保存・Teams通知テスト
 
 on:
   workflow_dispatch:

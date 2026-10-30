@@ -1,4 +1,4 @@
-name: Mail analysis and Teams report
+name: メール分析・Teamsレポート通知
 
 on:
   schedule:

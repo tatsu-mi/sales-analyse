@@ -1,4 +1,4 @@
-name: Rematch saved mail analysis
+name: 保存済みメール分析の再マッチング
 
 on:
   workflow_dispatch:

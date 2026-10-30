@@ -14,7 +14,7 @@
 
 5. 対象フォルダ直下にUTF-8の `engineers.md`・`priority_rules.md` を配置。
 6. `reports/` にレポート閲覧者の閲覧権限を設定。一時データの `temporary-runs/` は運用担当者に閲覧を限定。
-7. **SharePoint upload and Teams notification test** を実行し、Teamsのリンクからレポートを確認。
+7. **SharePoint保存・Teams通知テスト** を実行し、Teamsのリンクからレポートを確認。
 
 クライアントシークレット・AzureサブスクリプションIDは不要。GHAでは `.env` を作成しません。
 

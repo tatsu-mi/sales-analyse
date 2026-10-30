@@ -1,4 +1,4 @@
-name: Resume mail analysis
+name: メール分析の再開
 
 on:
   workflow_dispatch:

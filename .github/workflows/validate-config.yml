@@ -1,4 +1,4 @@
-name: Validate TOML configuration
+name: TOML設定の検証
 
 on:
   push:

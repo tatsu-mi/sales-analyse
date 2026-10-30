@@ -1,4 +1,4 @@
-name: Update engineers from skill sheets
+name: スキルシート解析・エンジニア一覧更新
 
 on:
   workflow_dispatch:
