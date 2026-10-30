@@ -146,24 +146,35 @@ def validate_profiles(answer, items):
     for record in result:
         require(type(record['complete']) is bool and strings(record['unassessed_information']))
         require(all(isinstance(record.get(k), list) for k in ('facts', 'attributes', 'routes')))
-        for fact in record['facts']:
-            require(strings(fact['terms'], True) and isinstance(fact['event_id'], str) and bool(fact['event_id']))
-            require(fact['experience'] in EXPERIENCES and fact['polarity'] in ('present', 'absent'))
-            require(type(fact['months']) is int and fact['months'] >= -1)
-            require(fact['duration_kind'] in ('total', 'period', 'unknown'))
-            require(isinstance(fact['start'], str) and isinstance(fact['end'], str))
-            require(bool(fact['start']) == bool(fact['end']))
+        for index, fact in enumerate(record['facts']):
+            def check(condition, rule):
+                require(condition, f'facts[{index}]: {rule}')
+            check(strings(fact['terms'], True) and isinstance(fact['event_id'], str) and bool(fact['event_id']),
+                  'termsは空でない文字列配列、event_idは空でない文字列が必要です。')
+            check(fact['experience'] in EXPERIENCES and fact['polarity'] in ('present', 'absent'),
+                  'experienceまたはpolarityが不正です。')
+            check(type(fact['months']) is int and fact['months'] >= -1, 'monthsは-1以上の整数が必要です。')
+            check(fact['duration_kind'] in ('total', 'period', 'unknown'), 'duration_kindが不正です。')
+            check(isinstance(fact['start'], str) and isinstance(fact['end'], str), 'start/endは文字列が必要です。')
+            check(bool(fact['start']) == bool(fact['end']), 'start/endは両方指定するか両方空文字にしてください。')
             if fact['start']:
-                require(fact['duration_kind'] == 'period')
-                require(month_number(fact['start']) <= month_number(fact['end']))
+                check(fact['duration_kind'] == 'period', 'start/end指定時はduration_kind=periodが必要です。')
+                try:
+                    check(month_number(fact['start']) <= month_number(fact['end']), '開始月が終了月より後です。')
+                except ValueError as error:
+                    raise ValueError(f'facts[{index}].start/end: 有効なYYYY-MMの昇順期間が必要です。') from error
             if fact['duration_kind'] == 'unknown':
-                require(fact['months'] == -1 and not fact['start'])
-        for attribute in record['attributes']:
-            require(attribute['field'] in FIELDS and isinstance(attribute['value'], str) and bool(attribute['value'].strip()))
-            if attribute['field'] == 'available_from':
-                iso_date(attribute['value'])
-            elif attribute['field'] == 'monthly_rate_min':
-                number(attribute['value'])
+                check(fact['months'] == -1 and not fact['start'], 'duration_kind=unknownではmonths=-1、start/endは空文字が必要です。')
+        for index, attribute in enumerate(record['attributes']):
+            require(attribute['field'] in FIELDS and isinstance(attribute['value'], str) and bool(attribute['value'].strip()),
+                    f'attributes[{index}]: fieldまたはvalueが不正です。')
+            try:
+                if attribute['field'] == 'available_from':
+                    iso_date(attribute['value'])
+                elif attribute['field'] == 'monthly_rate_min':
+                    number(attribute['value'])
+            except ValueError as error:
+                raise ValueError(f"attributes[{index}].{attribute['field']}: 日付はYYYY-MM-DD、金額は数値文字列が必要です。") from error
         for route in record['routes']:
             require(all(isinstance(route[k], str) and route[k].strip() for k in ('origin', 'workplace', 'route')))
             require(type(route['minutes']) is int and route['minutes'] >= 0)

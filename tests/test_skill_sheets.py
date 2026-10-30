@@ -136,6 +136,42 @@ class SkillSheetTests(unittest.TestCase):
     def test_pdf_model_defaults_to_common_model(self):
         self.assertEqual(sheets.model_settings({'model': 'mail-model'}), {'model': 'mail-model'})
 
+    def test_internal_id_is_assigned_by_application(self):
+        value = record()
+        del value['id']
+        self.assertNotIn('id', sheets.SCHEMA['properties'])
+        self.assertNotIn('各idをrecordsに一度ずつ返す', sheets.PROMPT)
+        with patch.object(app, 'count_input_tokens', return_value=100), patch.object(
+                app, 'generate', return_value=json.dumps(value)):
+            result = self.real_analyse(b'%PDF-test', self.settings, 'key', Mock(), {'inputTokenLimit': 5000})
+        self.assertEqual(result['id'], 'sheet')
+
+    def test_invalid_duration_retries_with_specific_feedback(self):
+        invalid = record()
+        invalid['facts'][0]['duration_kind'] = 'total'
+        limiter = Mock()
+        with patch.object(app, 'count_input_tokens', return_value=100) as count, patch.object(
+                app, 'generate', side_effect=[json.dumps(invalid), json.dumps(record())]) as generate:
+            result = self.real_analyse(b'%PDF-test', self.settings, 'key', limiter, {'inputTokenLimit': 5000})
+            self.assertEqual(result, record())
+            self.assertEqual(generate.call_count, 2)
+            prompt = generate.call_args.args[2]
+            self.assertIn('facts[0]', prompt)
+            self.assertIn('duration_kind=period', prompt)
+            self.assertEqual(count.call_args.args[2], prompt)
+            for call in generate.call_args_list:
+                call.kwargs['before_request']()
+            self.assertEqual(limiter.reserve.call_count, 2)
+
+    def test_repeated_invalid_response_reports_field_and_stops(self):
+        invalid = record()
+        invalid['attributes'].append({'field': 'available_from', 'value': '2026-11'})
+        with patch.object(app, 'count_input_tokens', return_value=100), patch.object(
+                app, 'generate', return_value=json.dumps(invalid)) as generate:
+            with self.assertRaisesRegex(ValueError, r'再解析後.*attributes\[1\].available_from'):
+                self.real_analyse(b'%PDF-test', self.settings, 'key', Mock(), {'inputTokenLimit': 5000})
+            self.assertEqual(generate.call_count, 2)
+
     def test_listing_paginates_and_filters_files(self):
         self.store.base = 'https://graph.microsoft.com/v1.0/drives/d/items/f'
         next_url = 'https://graph.microsoft.com/v1.0/drives/d/items/f/children?$skiptoken=abc'
