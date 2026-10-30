@@ -92,7 +92,7 @@ python -m sales_analyze.rematch --source-dir output/元の分析結果フォル�
 | メール分析の再開 | 失敗した実行の `run_id`（例：`123456789-1`） |
 | 保存済みメール分析の再マッチング | 元の一時ファイルの `run_id`（完了済みも可）、再開地点の `start_from`（上表参照） |
 | SharePoint保存・Teams通知テスト | なし |
-| スキルシート解析・エンジニア一覧更新 | `mode`: `append`（追記） / `overwrite`（上書き）。[準備・実行手順](docs/skill-sheets.md) |
+| スキルシート解析・エンジニア一覧更新 | `mode`: `append`（追記） / `overwrite`（上書き） / `prune`（除外）。[準備・実行手順](docs/skill-sheets.md) |
 
 エラーログ：`temporary-runs/<run_id>/error-*.log`。再マッチングは `temporary-runs/rematch-<GitHub実行ID>-<試行回数>/`。
 

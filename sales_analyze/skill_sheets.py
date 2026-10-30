@@ -56,7 +56,7 @@ completeは、PDFに記載されたマッチング対象の情報を読み取り
 """
 
 
-def list_pdfs(store):
+def list_pdfs(store, *, allow_empty=False):
     url = store.base + ':/' + quote(FOLDER, safe='') + ':/children'
     items = []
     seen = set()
@@ -75,7 +75,7 @@ def list_pdfs(store):
                     raise ValueError('PDFの資料名が不正または重複しています。')
                 items.append(item)
         url = page.get('@odata.nextLink')
-    if not items:
+    if not items and not allow_empty:
         raise ValueError('対象者スキルシート直下にPDFがありません。')
     return sorted(items, key=lambda item: item['name'])
 
@@ -137,20 +137,56 @@ def render_sheet(record, filename):
             + '### 追加条件\n\n<!-- 必ず満たす条件を箇条書きで記載してください。 -->\n')
 
 
-def validate_markdown(text):
+def validate_markdown(text, *, allow_empty=False):
+    if allow_empty and not re.search(r'^##[ \t]+', text, re.MULTILINE):
+        return
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'engineers.md'
         path.write_text(text, encoding='utf-8')
         engineer_matching.load_profiles(path)
 
 
+def prune_missing(old, filenames):
+    headings = list(re.finditer(r'^##[ \t]+([^\r\n]+)', old, re.MULTILINE))
+    sections = [old[:headings[0].start()]] if headings else [old]
+    removed = 0
+    for index, heading in enumerate(headings):
+        source = heading[1].split('｜', 1)
+        if len(source) == 2 and source[1].strip() not in filenames:
+            removed += 1
+            continue
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(old)
+        sections.append(old[heading.start():end])
+    return ''.join(sections), removed
+
+
+def publish(store, original, text, count):
+    # Refuse to clobber edits made while the update was being processed.
+    if store.request('GET', 'engineers.md', missing=True) != original:
+        raise ValueError('更新中にengineers.mdが変更されました。再実行してください。')
+    if original is not None:
+        store.folder('', 'engineers-backups')
+        store.put('engineers-backups/' + uuid4().hex + '.md', original)
+    store.put('engineers.md', text.encode('utf-8'))
+    print(f'engineers.mdを更新しました（{count}件）。')
+
+
 def update(store, mode, settings, key, work):
-    if mode not in ('append', 'overwrite'):
-        raise ValueError('更新方式はappendまたはoverwriteを指定してください。')
+    if mode not in ('append', 'overwrite', 'prune'):
+        raise ValueError('更新方式はappend、overwrite、pruneを指定してください。')
     original = store.request('GET', 'engineers.md', missing=True)
     old = original.decode('utf-8-sig') if original is not None else ''
     if old.strip():
-        validate_markdown(old)
+        validate_markdown(old, allow_empty=True)
+    if mode == 'prune':
+        filenames = {item['name'] for item in list_pdfs(store, allow_empty=True)}
+        text, removed = prune_missing(old, filenames)
+        if not removed:
+            print('除外対象のエンジニアはいません。')
+            return
+        validate_markdown(text, allow_empty=True)
+        publish(store, original, text, removed)
+        return
     sources = set(re.findall(r'^##[ \t]+[^\n]*｜([^\r\n]+)', old, re.MULTILINE))
     targets = [item for item in list_pdfs(store) if mode == 'overwrite' or item['name'] not in sources]
     if not targets:
@@ -170,17 +206,11 @@ def update(store, mode, settings, key, work):
         except Exception as error:
             # Private filename/details only go to the runner's private log.
             raise ValueError(f"PDF解析に失敗しました: {item['name']} ({error})") from error
-    preamble = old[:re.search(r'^##[ \t]+', old, re.MULTILINE).start()] if old.strip() else '# エンジニアマッチング用特徴整理\n\n'
+    heading = re.search(r'^##[ \t]+', old, re.MULTILINE)
+    preamble = old[:heading.start()] if heading else old or '# エンジニアマッチング用特徴整理\n\n'
     text = (old.rstrip() + '\n\n' if mode == 'append' and old.strip() else preamble) + '\n\n'.join(sections) + '\n'
     validate_markdown(text)
-    # Refuse to clobber edits made while the PDFs were being processed.
-    if store.request('GET', 'engineers.md', missing=True) != original:
-        raise ValueError('解析中にengineers.mdが変更されました。再実行してください。')
-    if original is not None:
-        store.folder('', 'engineers-backups')
-        store.put('engineers-backups/' + uuid4().hex + '.md', original)
-    store.put('engineers.md', text.encode('utf-8'))
-    print(f'engineers.mdを更新しました（{len(targets)}件）。')
+    publish(store, original, text, len(targets))
 
 
 def model_settings(settings):
@@ -195,13 +225,13 @@ def model_settings(settings):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', required=True, choices=('append', 'overwrite'))
+    parser.add_argument('--mode', required=True, choices=('append', 'overwrite', 'prune'))
     parser.add_argument('--config', type=Path, default=Path('config.toml'))
     args = parser.parse_args(argv)
     try:
         config = app.load_config(args.config, load_priority_rules=False)
-        settings = model_settings(config['gemini'])
-        key = app.secret(config['gemini'], 'api_key')
+        settings = model_settings(config['gemini']) if args.mode != 'prune' else {}
+        key = app.secret(config['gemini'], 'api_key') if args.mode != 'prune' else None
         with tempfile.TemporaryDirectory() as directory:
             update(Store(), args.mode, settings, key, Path(directory))
         return 0

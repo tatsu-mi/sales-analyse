@@ -80,6 +80,72 @@ class SkillSheetTests(unittest.TestCase):
             self.run_update('overwrite')
         self.store.put.assert_not_called()
 
+    def test_prune_preserves_remaining_sections_and_backs_up_original(self):
+        old = '# 共通説明\r\n\r\n' + self.old + '\n' + sheets.render_sheet(record('C'), 'C.pdf')
+        self.store.request.return_value = old.encode('utf-8-sig')
+        self.run_update('prune')
+        self.assertEqual(self.output(), '# 共通説明\r\n\r\n' + self.old + '\n')
+        self.assertEqual(self.store.put.call_args_list[0].args[1], old.encode('utf-8-sig'))
+        self.analyse.assert_not_called()
+        app.model_limits.assert_not_called()
+        self.assertEqual(self.store.request.call_count, 2)
+        self.list_pdfs.assert_called_once_with(self.store, allow_empty=True)
+
+    def test_prune_without_missing_sources_is_noop_and_does_not_append(self):
+        self.run_update('prune')
+        self.store.put.assert_not_called()
+        self.analyse.assert_not_called()
+
+    def test_prune_keeps_sections_without_source_filename(self):
+        old = '# 共通説明\n\n## 手動登録\n\nPython\n\n' + self.old
+        self.store.request.return_value = old.encode()
+        self.list_pdfs.return_value = []
+        self.run_update('prune')
+        self.assertEqual(self.output(), '# 共通説明\n\n## 手動登録\n\nPython\n\n')
+
+    def test_prune_can_remove_all_then_append_again(self):
+        for preamble in ('', '# 共通説明\n\n'):
+            with self.subTest(preamble=preamble):
+                self.store.request.side_effect = None
+                self.store.request.return_value = (preamble + self.old).encode()
+                self.list_pdfs.return_value = []
+                self.run_update('prune')
+                self.assertEqual(self.output(), preamble)
+                self.store.request.return_value = self.output().encode()
+                self.list_pdfs.return_value = [{'name': 'B.PDF'}]
+                self.run_update('append')
+                self.assertIn('## B｜B.PDF', self.output())
+                self.assertTrue(self.output().startswith(preamble))
+
+    def test_prune_missing_engineers_is_noop(self):
+        self.store.request.return_value = None
+        self.run_update('prune')
+        self.store.put.assert_not_called()
+
+    def test_prune_failed_listing_never_publishes(self):
+        self.list_pdfs.side_effect = ValueError('フォルダ取得失敗')
+        with self.assertRaisesRegex(ValueError, 'フォルダ取得失敗'):
+            self.run_update('prune')
+        self.store.put.assert_not_called()
+
+    def test_prune_concurrent_edit_is_not_overwritten(self):
+        self.list_pdfs.return_value = []
+        self.store.request.side_effect = [self.old.encode(), b'edited']
+        with self.assertRaisesRegex(ValueError, '変更'):
+            self.run_update('prune')
+        self.store.put.assert_not_called()
+
+    def test_prune_matches_exact_filename(self):
+        self.list_pdfs.return_value = [{'name': 'a.pdf'}]
+        self.run_update('prune')
+        self.assertEqual(self.output(), '')
+
+    def test_prune_cli_does_not_require_gemini_key(self):
+        with patch.object(app, 'load_config', return_value={}), patch.object(
+                app, 'secret') as secret, patch.object(sheets, 'Store', return_value=self.store):
+            self.assertEqual(sheets.main(['--mode', 'prune']), 0)
+        secret.assert_not_called()
+
     def test_duplicate_names_never_overwrite(self):
         self.analyse.return_value = record('A')
         with self.assertRaisesRegex(ValueError, '重複'):
@@ -208,6 +274,13 @@ class SkillSheetTests(unittest.TestCase):
         with patch.object(sheets.sharepoint_reports, 'graph', return_value={
                 'value': [], '@odata.nextLink': 'https://evil.example/page'}):
             with self.assertRaises(ValueError):
+                self.real_list_pdfs(self.store)
+
+    def test_empty_listing_is_allowed_only_when_requested(self):
+        self.store.base = 'https://graph.microsoft.com/v1.0/drives/d/items/f'
+        with patch.object(sheets.sharepoint_reports, 'graph', return_value={'value': []}):
+            self.assertEqual(self.real_list_pdfs(self.store, allow_empty=True), [])
+            with self.assertRaisesRegex(ValueError, 'PDFがありません'):
                 self.real_list_pdfs(self.store)
 
 

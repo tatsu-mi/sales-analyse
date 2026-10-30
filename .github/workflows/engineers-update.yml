@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'append: 未登録資料を追記 / overwrite: 全PDFから再生成'
+        description: 'append: 未登録資料を追記 / overwrite: 全PDFから再生成 / prune: PDFのない登録を除外'
         required: true
         default: append
         type: choice
         options:
           - append
           - overwrite
+          - prune
 
 permissions:
   contents: read

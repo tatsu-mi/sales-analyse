@@ -12,8 +12,11 @@ GitHub Actionsの **スキルシート解析・エンジニア一覧更新 → R
 | --- | --- |
 | `append`（既定） | `## 名前｜資料名.pdf` の資料名が未登録のPDFだけを解析し、末尾へ追記。既存本文・追加条件を保持 |
 | `overwrite` | 全PDFを解析して全員のセクションを再生成。既存追加条件も削除。先頭の共通説明は保持 |
+| `prune` | 見出しの資料名に対応するPDFがフォルダ直下にないエンジニアを除外。残る本文・追加条件・共通説明を保持。PDF解析・追記は行わない |
 
 同じ資料名のPDFを差し替えた場合は `overwrite` を選びます。同じ対象者の別名PDFは自動統合しません。氏名の重複は更新前検証でエラーになるため、古いPDFを除いてください。
+
+`prune` は `## 名前｜資料名.pdf` の資料名を大文字・小文字も含めて照合します。資料名のない見出しは保持します。PDFが0件なら資料名付きの登録をすべて除外し、フォルダ取得に失敗した場合は更新を中止します。除外対象がなければ書き込みません。全員を除外した一覧では、マッチングを実行する前にPDFを配置して `append` で再登録してください。`prune` にGemini APIキーは不要です。
 
 `config.toml` の `[gemini]` にPDF解析専用のモデルを指定できます。メール分析のモデルには影響しません。PDF入力・構造化出力に対応し、APIキーで利用可能なGeminiモデルIDを指定してください。
 
@@ -30,6 +33,7 @@ GitHub Actionsの **スキルシート解析・エンジニア一覧更新 → R
 az login --tenant "テナントID" --allow-no-subscriptions
 python -m sales_analyze.skill_sheets --mode append
 python -m sales_analyze.skill_sheets --mode overwrite
+python -m sales_analyze.skill_sheets --mode prune
 ```
 
 ## 抽出・更新の仕様
