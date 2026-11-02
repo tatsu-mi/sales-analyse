@@ -119,6 +119,7 @@ class IntegratedPipelineTests(unittest.TestCase):
         own = [entry for entry in audit if entry['engineer'] == 'A']
         self.assertEqual([entry['assessment']['additional_conditions'][0]['state'] for entry in own],
                          ['match', 'mismatch', 'unknown'])
+        self.assertEqual([entry['state'] for entry in own], ['match', 'mismatch', 'unknown'])
 
     def test_failed_additional_condition_assessment_is_excluded(self):
         instance = self.make(self.setup_projects(1))
@@ -134,6 +135,58 @@ class IntegratedPipelineTests(unittest.TestCase):
         ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
         self.assertEqual(ranked['ses_by_engineer'][0]['entries'], [])
         self.assertEqual(len(ranked['ses_by_engineer'][1]['entries']), 1)
+
+    def test_additional_conditions_skip_normal_mismatches_and_stop_at_top_n(self):
+        instance = self.make(self.setup_projects(15))
+        instance.profiles[0]['additional_conditions'] = '- 月額50万円以下'
+        self.h.extracted['14'][0]['mandatory_requirements'][0]['nodes'][0]['min_months'] = 60
+        with patch.object(run_progress, 'report') as progress:
+            instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        self.assertEqual(len(ranked['ses_by_engineer'][0]['entries']), 10)
+        self.assertEqual(len(self.condition_calls), 10)
+        self.assertNotIn('P-14', [item['project']['project_id'] for item in self.condition_calls])
+        events = [call.args[0] for call in progress.call_args_list]
+        self.assertLess(events.index('engineer_start'), events.index('conditions_start'))
+        self.assertNotIn('extract_preparing', events[events.index('engineer_start'):])
+        audit = json.loads((instance.output / 'engineer_assessments.json').read_text(encoding='utf-8'))
+        own = [entry['assessment'] for entry in audit if entry['engineer'] == 'A']
+        self.assertEqual(sum(c.get('additional_conditions_pending', False) for c in own), 4)
+
+    def test_additional_conditions_refill_from_next_ranked_candidates(self):
+        instance = self.make(self.setup_projects(5))
+        instance.rules['top_n'] = 2
+        instance.profiles[0]['additional_conditions'] = '- 月額50万円以下'
+        self.condition_states = {'P-4': 'mismatch', 'P-3': 'unknown'}
+        instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        self.assertEqual([e['latest']['project_id'] for e in ranked['ses_by_engineer'][0]['entries']],
+                         ['P-2', 'P-1'])
+        self.assertEqual([item['project']['project_id'] for item in self.condition_calls],
+                         ['P-4', 'P-3', 'P-2', 'P-1'])
+
+    def test_additional_conditions_try_another_project_in_same_mail_if_first_fails(self):
+        mails = self.setup_projects(1)
+        second = copy.deepcopy(self.h.extracted['0'][0])
+        second['project_id'] = 'P-1'
+        self.h.extracted['0'].append(second)
+        instance = self.make(mails)
+        instance.rules['top_n'] = 1
+        instance.profiles[0]['additional_conditions'] = '- 月額50万円以下'
+        ordered = sorted(['P-0', 'P-1'], key=lambda project_id: pipeline.digest(
+            pipeline.encoded(['sales@example.invalid', project_id])), reverse=True)
+        self.condition_states = {ordered[0]: 'mismatch'}
+        instance.run()
+        ranked = json.loads((instance.output / 'ranked_emails.json').read_text(encoding='utf-8'))
+        self.assertEqual([e['latest']['project_id'] for e in ranked['ses_by_engineer'][0]['entries']], [ordered[1]])
+        self.assertEqual([item['project']['project_id'] for item in self.condition_calls], ordered)
+
+    def test_additional_conditions_do_not_call_ai_without_normal_candidates(self):
+        instance = self.make(self.setup_projects(1))
+        instance.profiles[0]['additional_conditions'] = '- 月額50万円以下'
+        self.h.extracted['0'][0]['mandatory_requirements'][0]['nodes'][0]['min_months'] = 60
+        instance.run()
+        self.assertEqual(self.condition_calls, [])
 
     def test_each_ses_project_matched_once_for_all_people_and_contract_is_omitted(self):
         instance = self.make(self.setup_projects(15, contract=True))

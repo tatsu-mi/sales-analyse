@@ -239,6 +239,8 @@ class Pipeline:
             LOGGER.info(f"統合キーワードへの案件照合: {len(items)}案件" + ("（キャッシュ使用）" if cached else ""))
         elif schema == title_filter.SCHEMA:
             LOGGER.info(f"件名のAI選別：{len(items):,}通{'（キャッシュ使用）' if cached else ''}")
+        elif schema == additional_conditions.SCHEMA:
+            run_progress.report('conditions_cached' if cached else 'conditions_preparing', count=len(items))
         elif schema is not None:
             detail = (f"今回の{len(items):,}通は保存済みの分析結果を使用" if cached
                       else f"今回の{len(items):,}通を分析中")
@@ -785,27 +787,17 @@ class Pipeline:
         today = date.fromisoformat(self.metadata.get('stop_at', self.metadata['end_date'])[:10])
         result, audit = [], []
         for index, (profile, facts) in enumerate(zip(self.profiles, structured), 1):
+            run_progress.report('engineer_start', index=index, total=len(self.profiles), count=len(candidates))
             eligible = []
             factors = integrated_matching.keyword_factors(facts, keyword_ids)
             conditions = additional_conditions.parse(profile.get('additional_conditions', ''))
-            condition_records = []
-            if conditions:
-                condition_items = [dict(id=str(item['id']), conditions=conditions,
-                    profile=profile['text'], project=item['project'],
-                    source_truncated=item['source_truncated']) for item in items]
-                condition_records = self.shared_records(condition_items, additional_conditions.PROMPT,
-                    additional_conditions.SCHEMA, additional_conditions.validate,
-                    'additional_conditions', additional_conditions.fallback)
-            run_progress.report('engineer_start', index=index, total=len(self.profiles), count=len(candidates))
-            for project_index, (value, item, plan) in enumerate(zip(candidates, items, plans)):
+            for value, item, plan in zip(candidates, items, plans):
                 linked = {key for req in plan['requirements'] + plan['additional_requirements'] for key in req['keywords']}
                 linked.update(key for pref in plan['preferences'] for key in pref['keywords'])
                 if (not (linked & factors.keys()) and not facts.get('_failed') and not plan.get('_failed')
                         and plan['complete'] and facts['complete']):
                     continue
                 check = integrated_matching.assess(plan, item, facts, today, weights, keyword_ids)
-                conditions_met = not conditions or additional_conditions.apply(
-                    check, condition_records[project_index], conditions)
                 if check['state'] == 'match' and not all(c['state'] == 'match' for c in value['latest']['assessments']):
                     check['state'] = 'unknown'
                     check['evidence'] += ' 共通条件に未確認項目があります。'
@@ -817,8 +809,14 @@ class Pipeline:
                 audit.append(dict(engineer=profile['file'], career_id=facts['id'], uid=value['uid'],
                     project_key=value.get('project_key', item['id']), project_id=latest['project_id'],
                     title=latest['title'], state=check['state'], assessment=check))
-                if check['state'] != 'mismatch' and conditions_met:
+                if check['state'] != 'mismatch':
+                    if conditions:
+                        check['additional_conditions_pending'] = True
                     eligible.append(entry)
+            if conditions:
+                eligible = self.filter_additional_conditions(eligible, items, profile, conditions)
+                for record in audit:
+                    record['state'] = record['assessment']['state']
             group = dict(file=profile['file'], name=profile.get('name', profile['file']),
                          career_id=facts['id'], sha256=profile['sha256'],
                          entries=integrated_matching.shortlist(eligible, self.rules))
@@ -828,6 +826,39 @@ class Pipeline:
             self.checkpoint('engineer_completed')
             run_progress.report('engineer_complete', index=index, total=len(self.profiles))
         return result
+
+    def filter_additional_conditions(self, eligible, items, profile, conditions):
+        """Check ranked candidates only until the requested number of mails passes."""
+        remaining, accepted = list(eligible), []
+        by_id = {item['id']: item for item in items}
+        checked = 0
+        while remaining and len(accepted) < self.rules['top_n']:
+            batch = integrated_matching.shortlist(remaining, dict(
+                self.rules, top_n=self.rules['top_n'] - len(accepted)))
+            condition_items = []
+            for entry in batch:
+                item = by_id[entry['engineer_match']['id']]
+                condition_items.append(dict(id=str(item['id']), conditions=conditions,
+                    profile=profile['text'], project=item['project'],
+                    source_truncated=item['source_truncated']))
+            run_progress.report('conditions_start', count=len(batch), candidates=len(eligible),
+                                checked=checked, accepted=len(accepted), target=self.rules['top_n'])
+            records = self.shared_records(condition_items, additional_conditions.PROMPT,
+                additional_conditions.SCHEMA, additional_conditions.validate,
+                'additional_conditions', additional_conditions.fallback)
+            for entry, record in zip(batch, records):
+                check = entry['engineer_match']
+                check['additional_conditions_pending'] = False
+                if additional_conditions.apply(check, record, conditions):
+                    accepted.append(entry)
+            checked += len(batch)
+            tested = {entry['engineer_match']['id'] for entry in batch}
+            accepted_mails = {entry['uid'] for entry in accepted}
+            remaining = [entry for entry in remaining
+                         if entry['engineer_match']['id'] not in tested and entry['uid'] not in accepted_mails]
+        run_progress.report('conditions_complete', checked=checked, candidates=len(eligible),
+                            accepted=len(accepted))
+        return accepted
 
     def run(self):
         # Rebuild the working DB from persisted inputs, never reuse an interrupted transaction.
