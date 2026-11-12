@@ -82,6 +82,7 @@ MESSAGES = {
     'notifying': 'Teamsへレポートのリンクを通知しています。',
     'committing': 'SharePointの前回実行時間を更新しています。',
     'waiting': 'APIの利用制限に合わせて約{seconds:,}秒待機します。',
+    'server_waiting': 'AIサービスで一時的なサーバーエラーが発生しました。約{seconds:,}秒待機して再試行します。',
     'complete': 'レポートの保存・通知と前回実行時間の更新が完了しました。',
     'rematch_complete': '保存済みメール分析データの再マッチングが完了しました。',
     'error_saved': '処理に失敗しました。詳細エラーログをSharePointの実行用一時フォルダへ保存しました。',

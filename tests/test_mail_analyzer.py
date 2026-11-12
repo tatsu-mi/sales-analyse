@@ -370,6 +370,64 @@ class MailTests(unittest.TestCase):
         with patch.object(app, "urlopen", return_value=response), self.assertRaises(app.ToolError):
             app.generate(settings, "key", "prompt")
 
+    def test_server_errors_continue_beyond_retry_limit_with_capped_backoff(self):
+        settings = {"timeout_seconds": 10, "retries": 5,
+                    "retry_base_seconds": 15, "retry_max_wait_seconds": 120}
+        errors = [HTTPError("https://example.com", code, "server failure", {}, None)
+                  for code in (503, 500, 502, 504, 503, 503, 503)]
+        before_request = MagicMock()
+        with patch.object(app, "urlopen", side_effect=errors + [io.BytesIO(b'{"ok": true}')]) as urlopen, \
+                patch.object(app.random, "uniform", return_value=0), \
+                patch.object(app.time, "sleep") as sleep, \
+                patch.object(app.run_progress, "report") as progress, \
+                self.assertLogs(app.LOGGER, level="WARNING") as logs:
+            self.assertEqual(app.json_api_request(settings, "secret-key", "https://example.com",
+                                                 before_request=before_request), {"ok": True})
+        self.assertEqual(urlopen.call_count, 8)
+        self.assertEqual(before_request.call_count, 8)
+        waits = [call.kwargs["seconds"] for call in progress.call_args_list]
+        self.assertTrue(all(call.args == ("server_waiting",) for call in progress.call_args_list))
+        self.assertEqual(waits, [15, 30, 60, 120, 120, 120, 120])
+        self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), sum(waits))
+        self.assertTrue(all(call.args[0] <= 60 for call in sleep.call_args_list))
+        self.assertIn("復旧まで継続", "\n".join(logs.output))
+
+    def test_server_error_respects_long_retry_after(self):
+        settings = {"timeout_seconds": 10, "retries": 0, "retry_max_wait_seconds": 120}
+        error = HTTPError("https://example.com", 503, "unavailable", {"Retry-After": "180"}, None)
+        with patch.object(app, "urlopen", side_effect=[error, io.BytesIO(b'{}')]), \
+                patch.object(app.random, "uniform", return_value=0), patch.object(app.time, "sleep") as sleep:
+            self.assertEqual(app.json_api_request(settings, "key", "https://example.com"), {})
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 60, 60])
+
+    def test_server_errors_do_not_consume_quota_or_network_retry_budget(self):
+        settings = {"timeout_seconds": 10, "retries": 1}
+        for next_error in (HTTPError("https://example.com", 429, "limited", {}, None), TimeoutError()):
+            errors = [HTTPError("https://example.com", 503, "unavailable", {}, None)
+                      for _ in range(3)]
+            with self.subTest(error=type(next_error).__name__), \
+                    patch.object(app, "urlopen", side_effect=errors + [next_error, io.BytesIO(b'{}')]), \
+                    patch.object(app.time, "sleep"):
+                self.assertEqual(app.json_api_request(settings, "key", "https://example.com"), {})
+
+    def test_non_transient_http_errors_stop_without_retry(self):
+        for code in (400, 401, 403, 404):
+            error = HTTPError("https://example.com", code, "private server message", {}, None)
+            with self.subTest(code=code), patch.object(app, "urlopen", side_effect=error) as urlopen, \
+                    patch.object(app.time, "sleep") as sleep:
+                with self.assertRaisesRegex(app.ToolError, f"HTTP {code}"):
+                    app.json_api_request({"timeout_seconds": 10, "retries": 5}, "key", "https://example.com")
+                urlopen.assert_called_once()
+                sleep.assert_not_called()
+
+    def test_server_recovery_wait_can_be_interrupted(self):
+        error = HTTPError("https://example.com", 503, "unavailable", {}, None)
+        with patch.object(app, "urlopen", side_effect=error) as urlopen, \
+                patch.object(app.time, "sleep", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            app.json_api_request({"timeout_seconds": 10, "retries": 5}, "key", "https://example.com")
+        urlopen.assert_called_once()
+
     def test_429_respects_google_retry_delay(self):
         settings = {"model": "test", "max_output_tokens": 100, "timeout_seconds": 10, "retries": 1}
         body = {"error": {"details": [

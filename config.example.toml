@@ -18,9 +18,11 @@ model = "gemini-3.5-flash-lite"
 # API通信のタイムアウト（秒）と、1回の応答に使用する最大出力トークン数。
 timeout_seconds = 180
 max_output_tokens = 16384
-# 初回呼び出しに加えて再試行する回数。1以上で指定します。
+# HTTP 429・通信エラーで初回呼び出しに加えて再試行する回数。1以上で指定します。
+# HTTP 5xx（503など）はこの回数にかかわらず、復旧するまで待機・再試行します。
 retries = 5
 # HTTP 429/5xxの再試行待ち時間。Google指定の待ち時間があればそちらを優先します。
+# 5xxではGoogle指定の待ち時間がretry_max_wait_secondsを超えても待機します。
 retry_base_seconds = 15
 retry_max_wait_seconds = 120
 # ローカルで制御する送信量。Google側の実際の割当量以下に設定してください。

@@ -461,7 +461,10 @@ def json_api_request(settings, api_key, url, payload=None, before_request=None, 
     request = Request(url, data=None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                       headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                       method="GET" if payload is None else "POST")
-    for attempt in range(settings["retries"] + 1):
+    attempt = 0
+    server_attempt = 0
+    server_backoff = settings.get("retry_base_seconds", 15)
+    while True:
         try:
             if before_request is not None:
                 before_request()
@@ -474,15 +477,25 @@ def json_api_request(settings, api_key, url, payload=None, before_request=None, 
             info = api_error_details(error)
             # Suppress known secrets even if they occur in structured response fields.
             quota_details = "; ".join(info["details"]).replace(api_key, "[REDACTED]") if api_key else "; ".join(info["details"])
+            server_error = 500 <= error.code < 600
             delay = max(info["retry_seconds"],
-                        min(settings.get("retry_base_seconds", 15) * 2 ** attempt,
+                        min(server_backoff if server_error else settings.get("retry_base_seconds", 15) * 2 ** attempt,
                             settings.get("retry_max_wait_seconds", 120)) + random.uniform(0, 1))
-            if ((error.code == 429 or 500 <= error.code < 600) and attempt < settings["retries"]
-                    and not info["quota_blocked"]
-                    and info["retry_seconds"] <= settings.get("retry_max_wait_seconds", 120)):
-                run_progress.report('waiting', seconds=int(delay + 0.999))
-                LOGGER.warning("Gemini HTTP %s: %.1f秒待機して再試行 (%s/%s)。%s",
-                               error.code, delay, attempt + 1, settings["retries"], quota_details)
+            # Server failures are independent of quota limits. Keep waiting for recovery,
+            # without consuming the bounded quota/network retry budget.
+            if server_error or (error.code == 429 and attempt < settings["retries"]
+                                and not info["quota_blocked"]
+                                and info["retry_seconds"] <= settings.get("retry_max_wait_seconds", 120)):
+                run_progress.report('server_waiting' if server_error else 'waiting', seconds=int(delay + 0.999))
+                if server_error:
+                    server_attempt += 1
+                    server_backoff = min(server_backoff * 2, settings.get("retry_max_wait_seconds", 120))
+                    LOGGER.warning("Gemini HTTP %s: サーバー側の一時エラー。%.1f秒待機して再試行"
+                                   "（%s回目・復旧まで継続）。", error.code, delay, server_attempt)
+                else:
+                    attempt += 1
+                    LOGGER.warning("Gemini HTTP %s: %.1f秒待機して再試行 (%s/%s)。%s",
+                                   error.code, delay, attempt, settings["retries"], quota_details)
                 remaining = delay
                 while remaining > 0:
                     pause = min(remaining, 60)
@@ -502,6 +515,7 @@ def json_api_request(settings, api_key, url, payload=None, before_request=None, 
         except (URLError, TimeoutError, OSError):
             if attempt < settings["retries"]:
                 time.sleep(min(2 ** attempt, 30))
+                attempt += 1
                 continue
             raise ToolError("Gemini APIに接続できませんでした。ネットワークを確認してください。") from None
         except (ValueError, KeyError, TypeError):
